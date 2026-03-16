@@ -19,7 +19,7 @@ function fmt12(t){if(!t)return"";const[h,m]=t.split(":").map(Number);const ap=h<
 function doneCount(cls){return cls.filter(c=>c.status==="done").length;}
 function cancelledCount(cls){return cls.filter(c=>c.status==="cancelled").length;}
 function rescheduledCount(cls){return cls.filter(c=>c.status==="rescheduled").length;}
-function buildSeqNums(cls){let n=0;return cls.map(c=>c.status==="rescheduled"?null:++n);}
+function buildSeqNums(cls,target){let n=0;return cls.map(c=>{if(c.status==="rescheduled")return null;n++;return n<=target?n:null;});}
 function cycleName(cls){const co={};cls.forEach(c=>{const m=parseLocal(c.date).getMonth();co[m]=(co[m]||0)+1;});const d=Object.entries(co).sort((a,b)=>b[1]-a[1])[0];return d?MONTHS_ES[d[0]]:"Nuevo Ciclo";}
 
 function generateClasses(startIso,config){
@@ -257,7 +257,7 @@ function CycleCard({cycle,cycleIndex,isCurrent,onUpdateCycle,onUpdateClass,onUpd
   const target=cycle.config.classesPerCycle;
   const done=doneCount(cycle.classes),cancelled=cancelledCount(cycle.classes),reschd=rescheduledCount(cycle.classes);
   const remaining=Math.max(0,target-done-cancelled);
-  const seqNums=buildSeqNums(cycle.classes);
+  const seqNums=buildSeqNums(cycle.classes,target);
   const[editingConfig,setEditingConfig]=useState(false);
   const[localConfig,setLocalConfig]=useState({...cycle.config});
   const[showAll,setShowAll]=useState(isCurrent);
