@@ -453,7 +453,14 @@ export default function App(){
     persist({...data,cycles});
   }
 
-  function addNextCycle(){const last=data.cycles[data.cycles.length-1];if(!last)return;const config=last.config||DEFAULT_CONFIG;persist({...data,cycles:[...data.cycles,buildCycle(nextValidDay(addDays(last.endDate,1),config.weekDays),config,Date.now())]});}
+  function addNextCycle(){
+  const last=data.cycles[data.cycles.length-1];if(!last)return;
+  const config=last.config||DEFAULT_CONFIG;
+  // Tomar la fecha real de la ultima clase del ciclo anterior
+  const lastClassDate=last.classes.reduce((mx,c)=>c.date>mx?c.date:mx,"1970-01-01");
+  const nextStart=nextValidDay(addDays(lastClassDate,1),config.weekDays);
+  persist({...data,cycles:[...data.cycles,buildCycle(nextStart,config,Date.now())]});
+}
 
   if(loading)return(
     <div style={{minHeight:"100vh",background:C.bg,display:"flex",alignItems:"center",justifyContent:"center",fontFamily:"system-ui,sans-serif"}}>
