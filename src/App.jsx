@@ -225,7 +225,7 @@ function ClassCard({cls,seqNum,onUpdate,onUpdateRecalc,onCancel,onReschedule,isP
               <button onClick={()=>setEditing(!editing)} style={{...btn,background:C.bg7,color:C.z3}} title="Editar">✏️</button>
             </>}
             {isDone&&<button onClick={()=>onUpdate({...cls,status:"pending"})} style={{...btn,background:C.bg7,color:C.z3}} title="Deshacer">↩</button>}
-            {(isCanc||isReschd)&&<button onClick={()=>onUpdate({...cls,status:"pending",notes:"",cancelledAt:undefined,rescheduledAt:undefined})} style={{...btn,background:C.bg7,color:C.z3}} title="Restaurar">↩</button>}
+           {(isCanc||isReschd)&&<button onClick={()=>onUpdate({...cls,status:"pending",notes:"",cancelledAt:null,rescheduledAt:null})} style={{...btn,background:C.bg7,color:C.z3}} title="Restaurar">↩</button>}
           </div>
         </div>
         {editing&&(
