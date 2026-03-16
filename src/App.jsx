@@ -262,6 +262,7 @@ function CycleCard({cycle,cycleIndex,isCurrent,onUpdateCycle,onUpdateClass,onUpd
   const[localConfig,setLocalConfig]=useState({...cycle.config});
   const[showAll,setShowAll]=useState(isCurrent);
   const[confirmReset,setConfirmReset]=useState(false);
+  const canReset=cycle.classes.every(c=>c.status==="pending");
 
   function saveConfig(){onUpdateCycle({...cycle,config:{...localConfig}});setEditingConfig(false);}
 
@@ -309,7 +310,7 @@ function CycleCard({cycle,cycleIndex,isCurrent,onUpdateCycle,onUpdateClass,onUpd
         <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginTop:"8px"}}>
           <span style={{fontSize:"0.65rem",color:C.z5}}>${cycle.amount?.toLocaleString("es-CO")} COP · {target} clases{reschd>0&&<span style={{color:C.ora,marginLeft:"3px"}}>· +{reschd} repos.</span>}</span>
           <div style={{display:"flex",gap:"5px"}}>
-            <button onClick={()=>setConfirmReset(true)} style={{...btnSm,background:C.ambBg,color:C.amb,border:`1px solid ${C.ambBd}`}}>🔄 Reiniciar</button>
+            <button onClick={()=>canReset&&setConfirmReset(true)} style={{...btnSm,background:canReset?C.ambBg:"rgba(63,63,70,0.3)",color:canReset?C.amb:C.z6,border:`1px solid ${canReset?C.ambBd:C.bg7}`,cursor:canReset?"pointer":"not-allowed",opacity:canReset?1:0.5}} title={canReset?"Reiniciar ciclo":"No se puede reiniciar: hay clases registradas"}>🔄 Reiniciar</button>
             <button onClick={()=>setEditingConfig(!editingConfig)} style={btnSm}>⚙️ Config</button>
             <button onClick={()=>setShowAll(!showAll)} style={btnSm}>{showAll?"▲ Menos":"▼ Ver clases"}</button>
           </div>
@@ -400,19 +401,29 @@ export default function App(){
   function cancelClass(ci,li,cancelled){const cycles=[...data.cycles];const cls=[...cycles[ci].classes];cls[li]=cancelled;cycles[ci]={...cycles[ci],classes:cls};persist({...data,cycles});}
   function rescheduleClass(ci,li,reschd){const cycles=[...data.cycles];const cycle=cycles[ci];let cls=[...cycle.classes];cls[li]=reschd;cls.push(makeMakeup(cls,cycle.config));cycles[ci]={...cycle,classes:cls,endDate:cls[cls.length-1].date,name:cycleName(cls)};persist({...data,cycles});}
 
-  function resetCycle(cycleIdx){
-    const cycles=[...data.cycles];const cycle=cycles[cycleIdx];const config=cycle.config;
-    const settled=cycle.classes.filter(c=>c.status!=="pending");
-    const lastD=settled.reduce((mx,c)=>c.date>mx?c.date:mx,"");
-    const freshStart=lastD?nextValidDay(addDays(lastD,1),config.weekDays):nextValidDay(cycle.startDate,config.weekDays);
-    const slotsFilled=settled.filter(c=>c.status!=="rescheduled").length;
-    const slotsNeeded=Math.max(0,config.classesPerCycle-slotsFilled);
-    const fresh=[];let cursor=freshStart;
-    while(fresh.length<slotsNeeded){if(config.weekDays.includes(dow(cursor)))fresh.push({id:`cls-${Date.now()}-${fresh.length}-${Math.random().toString(36).slice(2,5)}`,date:cursor,time:defaultTime(cursor),status:"pending",type:"presencial",notes:""});cursor=addDays(cursor,1);}
-    const newCls=[...settled,...fresh].sort((a,b)=>a.date.localeCompare(b.date));
-    cycles[cycleIdx]={...cycle,classes:newCls,startDate:newCls[0]?.date,endDate:newCls[newCls.length-1]?.date,name:cycleName(newCls)};
-    persist({...data,cycles});
+ function resetCycle(cycleIdx){
+  const cycles=[...data.cycles];
+  const cycle=cycles[cycleIdx];
+  const config=cycle.config;
+  // Fecha de arranque: día siguiente válido después de la última clase del ciclo ANTERIOR
+  // Si es el primer ciclo, arranca desde hoy
+  const prevCycle=cycles[cycleIdx-1];
+  const prevLastDate=prevCycle
+    ?prevCycle.classes.reduce((mx,c)=>c.date>mx?c.date:mx,"1970-01-01")
+    :isoToday();
+  const freshStart=nextValidDay(addDays(prevLastDate,1),config.weekDays);
+  // Generar todas las clases desde freshStart
+  const newClasses=[];let cursor=freshStart;
+  while(newClasses.length<config.classesPerCycle){
+    if(config.weekDays.includes(dow(cursor)))newClasses.push({
+      id:`cls-${Date.now()}-${newClasses.length}-${Math.random().toString(36).slice(2,5)}`,
+      date:cursor,time:defaultTime(cursor),status:"pending",type:"presencial",notes:""
+    });
+    cursor=addDays(cursor,1);
   }
+  cycles[cycleIdx]={...cycle,classes:newClasses,startDate:newClasses[0].date,endDate:newClasses[newClasses.length-1].date,name:cycleName(newClasses)};
+  persist({...data,cycles});
+}
 
   function addNextCycle(){const last=data.cycles[data.cycles.length-1];if(!last)return;const config=last.config||DEFAULT_CONFIG;persist({...data,cycles:[...data.cycles,buildCycle(nextValidDay(addDays(last.endDate,1),config.weekDays),config,Date.now())]});}
 
