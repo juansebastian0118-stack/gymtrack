@@ -398,7 +398,14 @@ export default function App(){
   function updateClass(ci,li,upd){const cycles=[...data.cycles];const cls=[...cycles[ci].classes];cls[li]=upd;cycles[ci]={...cycles[ci],classes:cls};persist({...data,cycles});}
   function updateClassRecalc(ci,li,upd){const cycles=[...data.cycles];let cls=[...cycles[ci].classes];cls[li]=upd;cls=recalcForward(cls,li,cycles[ci].config);cycles[ci]={...cycles[ci],classes:cls,endDate:cls[cls.length-1]?.date,name:cycleName(cls)};persist({...data,cycles});}
   function cancelClass(ci,li,cancelled){const cycles=[...data.cycles];const cls=[...cycles[ci].classes];cls[li]=cancelled;cycles[ci]={...cycles[ci],classes:cls};persist({...data,cycles});}
-  function rescheduleClass(ci,li,reschd){const cycles=[...data.cycles];const cycle=cycles[ci];let cls=[...cycle.classes];cls[li]=reschd;cls.push(makeMakeup(cls,cycle.config));cycles[ci]={...cycle,classes:cls,endDate:cls[cls.length-1].date,name:cycleName(cls)};persist({...data,cycles});}
+  function rescheduleClass(ci,li,reschd){
+  const cycles=[...data.cycles];const cycle=cycles[ci];let cls=[...cycle.classes];
+  cls[li]=reschd;
+  const activeSlots=cls.filter(c=>c.status!=="rescheduled").length;
+  if(activeSlots<cycle.config.classesPerCycle){cls.push(makeMakeup(cls,cycle.config));}
+  cycles[ci]={...cycle,classes:cls,endDate:cls[cls.length-1].date,name:cycleName(cls)};
+  persist({...data,cycles});
+}
 
   function resetCycle(cycleIdx){
     const cycles=[...data.cycles];const cycle=cycles[cycleIdx];const config=cycle.config;
