@@ -15,12 +15,9 @@ function formatDate(iso){if(!iso)return"";const d=parseLocal(iso);return`${Strin
 function dow(iso){return parseLocal(iso).getDay();}
 function nextValidDay(iso,weekDays){let c=iso;while(!weekDays.includes(dow(c)))c=addDays(c,1);return c;}
 
-// ─── FIX 1: defaultTimeOptions now accepts config to use saved dayTimeOptions ──
 function defaultTimeOptions(iso, config){
   const d = dow(iso);
-  // Use per-day saved options if available
   if(config?.dayTimeOptions?.[d]) return config.dayTimeOptions[d];
-  // Fallback: Sat → 7,8,9 / others → 5,6,7
   return d===6?["07:00","08:00","09:00"]:["05:00","06:00","07:00"];
 }
 function defaultTime(iso, config){return defaultTimeOptions(iso, config)[0];}
@@ -33,21 +30,12 @@ function buildSeqNums(cls,target){let n=0;return cls.map(c=>{if(c.status==="resc
 function cycleName(cls){const co={};cls.forEach(c=>{const m=parseLocal(c.date).getMonth();co[m]=(co[m]||0)+1;});const d=Object.entries(co).sort((a,b)=>b[1]-a[1])[0];return d?MONTHS_ES[d[0]]:"Nuevo Ciclo";}
 function slugify(name){return name.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g,"").replace(/[^a-z0-9]+/g,"-").replace(/^-|-$/g,"");}
 
-// ─── FIX 1: generateClasses uses config.dayTimeOptions ───────────────────
 function generateClasses(startIso, config){
   const{classesPerCycle,weekDays}=config;const cls=[];let cursor=startIso;
   while(cls.length<classesPerCycle){
     if(weekDays.includes(dow(cursor))){
       const opts = defaultTimeOptions(cursor, config);
-      cls.push({
-        id:`cls-${Date.now()}-${cls.length}-${Math.random().toString(36).slice(2,5)}`,
-        date:cursor,
-        time:opts[0],
-        timeOptions:opts,
-        status:"pending",
-        type:"presencial",
-        notes:""
-      });
+      cls.push({id:`cls-${Date.now()}-${cls.length}-${Math.random().toString(36).slice(2,5)}`,date:cursor,time:opts[0],timeOptions:opts,status:"pending",type:"presencial",notes:""});
     }
     cursor=addDays(cursor,1);
   }
@@ -59,7 +47,6 @@ function buildCycle(startIso,config,idx){
   return{id:`cycle-${Date.now()}-${idx}`,name:cycleName(cls),classes:cls,paid:false,amount:config.amount,config:{...config},startDate:cls[0]?.date,endDate:cls[cls.length-1]?.date};
 }
 
-// ─── FIX 1: recalcForward also passes config for correct time options ─────
 function recalcForward(classes, changedIdx, config){
   const updated=[...classes];let cursor=addDays(updated[changedIdx].date,1);
   for(let i=changedIdx+1;i<updated.length;i++){
@@ -136,10 +123,6 @@ function initStudentData(student){
 
 // ─── SESSION ──────────────────────────────────────────────────────────────
 let _memSession = null;
-function loadSession(){
-  try{const v=sessionStorage.getItem("gymtrack-session");if(v){_memSession=JSON.parse(v);return _memSession;}}catch{}
-  return _memSession;
-}
 function saveSession(s){
   _memSession=s||null;
   try{if(s)sessionStorage.setItem("gymtrack-session",JSON.stringify(s));else sessionStorage.removeItem("gymtrack-session");}catch{}
@@ -287,7 +270,8 @@ function StudentSelector({students,selectedId,onSelect}){
 }
 
 // ─── ADMIN PANEL ──────────────────────────────────────────────────────────
-function AdminPanel({systemConfig,onSave,onClose}){
+// role prop: "admin" puede cambiar todos los PINs; "profesor" solo ve/cambia el PIN del Profesor
+function AdminPanel({systemConfig, role, onSave, onClose}){
   const[tab,setTab]=useState("students");
   const[students,setStudents]=useState(systemConfig.students||[]);
   const[pins,setPins]=useState(systemConfig.pins||DEFAULT_SYSTEM.pins);
@@ -306,8 +290,13 @@ function AdminPanel({systemConfig,onSave,onClose}){
     setNewName("");setNewPin("");setNewConfig({...DEFAULT_CONFIG});
   }
   function removeStudent(id){setStudents(students.filter(s=>s.id!==id));}
-  function updateStudentPin(id,pin){setStudents(students.map(s=>s.id===id?{...s,pin}:s));}
+  function updateStudentPin(id,p){setStudents(students.map(s=>s.id===id?{...s,pin:p}:s));}
   function handleSave(){onSave({...systemConfig,students,pins,teacherName});setSaved(true);setTimeout(()=>{setSaved(false);onClose();},700);}
+
+  // PINs rows: admin sees both; profesor sees only their own
+  const pinRows = role==="admin"
+    ? [["admin","Administrador",ROLES.admin.color],["profesor","Profesor",ROLES.profesor.color]]
+    : [["profesor","Profesor",ROLES.profesor.color]];
 
   return(
     <div style={{position:"fixed",inset:0,zIndex:60,background:"rgba(0,0,0,0.85)",backdropFilter:"blur(6px)",WebkitBackdropFilter:"blur(6px)",display:"flex",alignItems:"center",justifyContent:"center",padding:"16px"}}>
@@ -366,13 +355,22 @@ function AdminPanel({systemConfig,onSave,onClose}){
           )}
           {tab==="pins"&&(
             <div>
-              <div style={{fontSize:"0.75rem",color:C.z4,marginBottom:"14px"}}>PINs de acceso para Admin y Profesor</div>
-              {[["admin","Administrador",ROLES.admin.color],["profesor","Profesor",ROLES.profesor.color]].map(([key,label,color])=>(
+              <div style={{fontSize:"0.75rem",color:C.z4,marginBottom:"14px"}}>
+                {role==="admin" ? "PINs de acceso para Admin y Profesor" : "Tu PIN de acceso como Profesor"}
+              </div>
+              {pinRows.map(([key,label,color])=>(
                 <div key={key} style={{marginBottom:"12px"}}>
-                  <label style={{fontSize:"0.72rem",color:C.z4,display:"flex",alignItems:"center",gap:"6px",marginBottom:"5px"}}><span style={{width:"8px",height:"8px",borderRadius:"50%",background:color}}/>{label}</label>
+                  <label style={{fontSize:"0.72rem",color:C.z4,display:"flex",alignItems:"center",gap:"6px",marginBottom:"5px"}}>
+                    <span style={{width:"8px",height:"8px",borderRadius:"50%",background:color}}/>{label}
+                  </label>
                   <input type="password" maxLength={4} value={pins[key]||""} onChange={e=>setPins({...pins,[key]:e.target.value.replace(/\D/g,"").slice(0,4)})} placeholder="4 dígitos" style={{...inp,letterSpacing:"0.3em",textAlign:"center"}}/>
                 </div>
               ))}
+              {role==="profesor"&&(
+                <div style={{fontSize:"0.65rem",color:C.z5,marginTop:"4px",padding:"8px 10px",background:C.bg8,borderRadius:"8px",border:`1px solid ${C.bg7}`}}>
+                  🔒 El PIN del Administrador solo puede ser cambiado por el Administrador.
+                </div>
+              )}
               <div style={{fontSize:"0.65rem",color:C.z5,marginTop:"8px"}}>Los PINs de alumnos se editan en la pestaña Alumnos.</div>
             </div>
           )}
@@ -535,10 +533,9 @@ function ClassCard({cls,seqNum,role,cycleConfig,onUpdate,onUpdateRecalc,onCancel
   );
 }
 
-// ─── FIX 2: NewCycleCard with per-day time editor ─────────────────────────
+// ─── NewCycleCard with per-day time editor ────────────────────────────────
 const DAY_NAMES_SHORT = {0:"Dom",1:"Lun",2:"Mar",3:"Mié",4:"Jue",5:"Vie",6:"Sáb"};
 
-// Build default dayTimeOptions for selected days (Sat → 7,8,9; others → 5,6,7)
 function buildDefaultDayTimeOptions(weekDays){
   const result={};
   weekDays.forEach(d=>{result[d]=d===6?["07:00","08:00","09:00"]:["05:00","06:00","07:00"];});
@@ -552,7 +549,7 @@ function NewCycleCard({studentConfig,onAdd}){
     if(!base.dayTimeOptions)base.dayTimeOptions=buildDefaultDayTimeOptions(base.weekDays);
     return base;
   });
-  const[editingTimesFor,setEditingTimesFor]=useState(null); // dow number or null
+  const[editingTimesFor,setEditingTimesFor]=useState(null);
 
   const DAY_OPT=[{v:2,l:"Mar"},{v:4,l:"Jue"},{v:6,l:"Sáb"},{v:1,l:"Lun"},{v:3,l:"Mié"},{v:5,l:"Vie"},{v:0,l:"Dom"}];
   const inp={width:"100%",background:C.bg,border:`1px solid ${C.bg7}`,borderRadius:"8px",padding:"7px 10px",color:C.z2,fontSize:"0.875rem",outline:"none",boxSizing:"border-box"};
@@ -581,7 +578,6 @@ function NewCycleCard({studentConfig,onAdd}){
           <div style={{fontSize:"0.65rem",color:C.z5}}>Configura el ciclo, días y horarios predeterminados</div>
         </div>
       </div>
-
       <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:"10px",marginBottom:"14px"}}>
         <div>
           <label style={{fontSize:"0.68rem",color:C.z4,display:"block",marginBottom:"4px"}}>Fecha de inicio</label>
@@ -596,8 +592,6 @@ function NewCycleCard({studentConfig,onAdd}){
           <input type="number" value={config.amount} onChange={e=>setConfig({...config,amount:+e.target.value})} style={inp}/>
         </div>
       </div>
-
-      {/* Day selector */}
       <div style={{marginBottom:"14px"}}>
         <label style={{fontSize:"0.68rem",color:C.z4,display:"block",marginBottom:"6px"}}>Días de clase · toca 🕐 para editar horarios</label>
         <div style={{display:"flex",flexWrap:"wrap",gap:"5px"}}>
@@ -606,9 +600,7 @@ function NewCycleCard({studentConfig,onAdd}){
             const editing=editingTimesFor===d.v;
             return(
               <div key={d.v} style={{display:"flex",alignItems:"center",borderRadius:"8px",border:`1px solid ${active?(editing?C.sky:C.sky6):C.bg7}`,overflow:"hidden"}}>
-                <button onClick={()=>toggleDay(d.v)} style={{fontSize:"0.7rem",padding:"4px 8px",cursor:"pointer",border:"none",background:active?(editing?C.skyBg:"rgba(2,132,199,0.25)"):"transparent",color:active?"white":C.z5,fontWeight:active?700:400}}>
-                  {d.l}
-                </button>
+                <button onClick={()=>toggleDay(d.v)} style={{fontSize:"0.7rem",padding:"4px 8px",cursor:"pointer",border:"none",background:active?(editing?C.skyBg:"rgba(2,132,199,0.25)"):"transparent",color:active?"white":C.z5,fontWeight:active?700:400}}>{d.l}</button>
                 {active&&(
                   <button onClick={()=>setEditingTimesFor(editing?null:d.v)} style={{fontSize:"0.65rem",padding:"4px 5px",cursor:"pointer",border:"none",borderLeft:`1px solid ${editing?C.skyBd:C.bg7}`,background:editing?C.skyBg:C.bg8,color:editing?C.sky:C.z5}} title="Editar horarios">🕐</button>
                 )}
@@ -617,31 +609,21 @@ function NewCycleCard({studentConfig,onAdd}){
           })}
         </div>
       </div>
-
-      {/* Per-day time editor */}
       {editingTimesFor!==null&&config.dayTimeOptions[editingTimesFor]&&(
         <div style={{background:C.skyBg,border:`1px solid ${C.skyBd}`,borderRadius:"10px",padding:"12px",marginBottom:"14px"}}>
-          <div style={{fontSize:"0.72rem",fontWeight:700,color:C.sky,marginBottom:"8px"}}>
-            Horarios predeterminados — {DAY_NAMES_SHORT[editingTimesFor]}
-          </div>
-          <div style={{fontSize:"0.62rem",color:C.z4,marginBottom:"8px"}}>
-            El 1.º será la hora acordada por defecto al generar clases
-          </div>
+          <div style={{fontSize:"0.72rem",fontWeight:700,color:C.sky,marginBottom:"8px"}}>Horarios predeterminados — {DAY_NAMES_SHORT[editingTimesFor]}</div>
+          <div style={{fontSize:"0.62rem",color:C.z4,marginBottom:"8px"}}>El 1.º será la hora acordada por defecto al generar clases</div>
           <div style={{display:"flex",flexDirection:"column",gap:"6px"}}>
             {config.dayTimeOptions[editingTimesFor].map((t,i)=>(
               <div key={i} style={{display:"flex",alignItems:"center",gap:"8px"}}>
-                <span style={{fontSize:"0.65rem",color:i===0?C.em2:C.z5,fontWeight:i===0?700:400,minWidth:"52px"}}>
-                  {i===0?"1.ª (acordada)":i===1?"2.ª opción":"3.ª opción"}
-                </span>
-                <input type="time" value={t} onChange={e=>updateDayTime(editingTimesFor,i,e.target.value)}
-                  style={{flex:1,background:C.bg,border:`1px solid ${i===0?C.emBd:C.bg7}`,borderRadius:"7px",padding:"5px 8px",color:i===0?C.em2:C.z2,fontSize:"0.82rem",outline:"none"}}/>
+                <span style={{fontSize:"0.65rem",color:i===0?C.em2:C.z5,fontWeight:i===0?700:400,minWidth:"52px"}}>{i===0?"1.ª (acordada)":i===1?"2.ª opción":"3.ª opción"}</span>
+                <input type="time" value={t} onChange={e=>updateDayTime(editingTimesFor,i,e.target.value)} style={{flex:1,background:C.bg,border:`1px solid ${i===0?C.emBd:C.bg7}`,borderRadius:"7px",padding:"5px 8px",color:i===0?C.em2:C.z2,fontSize:"0.82rem",outline:"none"}}/>
                 <span style={{fontSize:"0.65rem",color:C.z5,minWidth:"38px"}}>{fmt12(t)}</span>
               </div>
             ))}
           </div>
         </div>
       )}
-
       <button onClick={()=>onAdd(startDate,config)} disabled={config.weekDays.length===0}
         style={{width:"100%",background:config.weekDays.length>0?C.sky6:"rgba(63,63,70,0.4)",border:"none",color:config.weekDays.length>0?"white":C.z6,padding:"10px",borderRadius:"10px",fontSize:"0.875rem",cursor:config.weekDays.length>0?"pointer":"not-allowed",fontWeight:700}}>
         Crear ciclo →
@@ -680,7 +662,6 @@ function CycleCard({cycle,cycleIndex,isCurrent,role,onUpdateCycle,onUpdateClass,
               {isCurrent?<span style={{fontSize:"0.62rem",padding:"2px 7px",borderRadius:"999px",background:C.sky6,color:"white",fontWeight:700}}>ACTUAL</span>:<span style={{fontSize:"0.62rem",padding:"2px 7px",borderRadius:"999px",background:C.bg7,color:C.z4}}>Ciclo {cycleIndex+1}</span>}
               <span style={{fontSize:"1.05rem",fontWeight:700,color:"white"}}>{cycle.name}</span>
             </div>
-            {/* FIX 1: show real startDate/endDate from first/last class */}
             <div style={{fontSize:"0.68rem",color:C.z4}}>{formatDate(cycle.classes[0]?.date||cycle.startDate)} → {formatDate(cycle.classes[cycle.classes.length-1]?.date||cycle.endDate)}</div>
           </div>
           {canManage(role)&&<button onClick={()=>onUpdateCycle({...cycle,paid:!cycle.paid})} style={{flexShrink:0,padding:"5px 11px",borderRadius:"9px",fontSize:"0.78rem",fontWeight:700,cursor:"pointer",border:"none",background:cycle.paid?"rgba(5,150,105,0.65)":C.bg8,color:cycle.paid?"white":C.z3}}>
@@ -854,21 +835,14 @@ function AppMain({session,systemConfig,onSystemSave,onLogout}){
   }
 
   function saveSystem(cfg){onSystemSave(cfg);}
-
   function updateCycle(idx,upd){const c=[...studentData.cycles];c[idx]=upd;persist({...studentData,cycles:c});}
+  function updateClass(ci,li,upd){const cycles=[...studentData.cycles];const cls=[...cycles[ci].classes];cls[li]=upd;cycles[ci]={...cycles[ci],classes:cls};persist({...studentData,cycles});}
 
-  function updateClass(ci,li,upd){
-    const cycles=[...studentData.cycles];const cls=[...cycles[ci].classes];cls[li]=upd;
-    cycles[ci]={...cycles[ci],classes:cls};
-    persist({...studentData,cycles});
-  }
-
-  // ─── FIX 1: update startDate when first class date changes ───────────────
   function updateClassRecalc(ci,li,upd){
     const cycles=[...studentData.cycles];let cls=[...cycles[ci].classes];
     cls[li]=upd;
     cls=recalcForward(cls,li,cycles[ci].config);
-    const newStart=cls[0]?.date||cycles[ci].startDate; // always take first class date
+    const newStart=cls[0]?.date||cycles[ci].startDate;
     const newEnd=cls[cls.length-1]?.date||cycles[ci].endDate;
     cycles[ci]={...cycles[ci],classes:cls,startDate:newStart,endDate:newEnd,name:cycleName(cls)};
     persist({...studentData,cycles});
@@ -912,11 +886,9 @@ function AppMain({session,systemConfig,onSystemSave,onLogout}){
     persist({...studentData,cycles:[...studentData.cycles,buildCycle(nextStart,config,Date.now())]});
   }
 
-  // ─── FIX 2: save dayTimeOptions from first cycle into config ─────────────
   function addFirstCycle(startDate,config){
     const start=nextValidDay(startDate,config.weekDays);
     const cycle=buildCycle(start,config,Date.now());
-    // Persist the dayTimeOptions so subsequent cycles inherit them
     persist({...studentData,cycles:[cycle],globalConfig:{...studentData.globalConfig,...config}});
   }
 
@@ -945,9 +917,9 @@ function AppMain({session,systemConfig,onSystemSave,onLogout}){
     <div style={{minHeight:"100vh",minHeight:"-webkit-fill-available",background:C.bg,color:C.z1,fontFamily:"'DM Sans',system-ui,sans-serif"}}>
       <style>{`@import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700;800&display=swap');*{box-sizing:border-box;-webkit-tap-highlight-color:transparent;}body{margin:0;padding:0;background:#09090b;}input,select,button{font-family:inherit;-webkit-appearance:none;appearance:none;}input[type=date],input[type=time]{-webkit-appearance:none;}`}</style>
 
-      {showAdmin&&<AdminPanel systemConfig={systemConfig} onSave={saveSystem} onClose={()=>setShowAdmin(false)}/>}
+      {/* Pasa role al AdminPanel para filtrar el PIN del admin */}
+      {showAdmin&&<AdminPanel systemConfig={systemConfig} role={role} onSave={saveSystem} onClose={()=>setShowAdmin(false)}/>}
 
-      {/* Topbar */}
       <div style={{position:"sticky",top:0,zIndex:40,background:"rgba(9,9,11,0.93)",backdropFilter:"blur(10px)",WebkitBackdropFilter:"blur(10px)",borderBottom:`1px solid ${C.bg8}`}}>
         <div style={{maxWidth:"680px",margin:"0 auto",padding:"9px 14px",display:"flex",alignItems:"center",justifyContent:"space-between",gap:"10px"}}>
           <div style={{display:"flex",alignItems:"center",gap:"9px",minWidth:0}}>
@@ -966,7 +938,6 @@ function AppMain({session,systemConfig,onSystemSave,onLogout}){
           <div style={{display:"flex",alignItems:"center",gap:"5px",flexShrink:0}}>
             {saving?<span style={{fontSize:"0.6rem",color:C.sky}}>💾</span>:lastSaved&&<span style={{fontSize:"0.6rem",color:C.z6}}>✓</span>}
             {canManage(role)&&<button onClick={exportCSV} style={btnA} title="Exportar Excel">⬇️</button>}
-            {/* FIX 3: show ⚙️ for admin AND profesor */}
             {canManage(role)&&<button onClick={()=>setShowAdmin(true)} style={btnA} title="Administración">⚙️</button>}
             <button onClick={()=>{setStudentData(null);setSelectedStudentId(null);onLogout();}} style={{...btnA,color:"#fb7185"}} title="Cerrar sesión">⏏️</button>
           </div>
@@ -974,9 +945,7 @@ function AppMain({session,systemConfig,onSystemSave,onLogout}){
       </div>
 
       <div style={{maxWidth:"680px",margin:"0 auto",padding:"18px 14px",display:"flex",flexDirection:"column",gap:"14px"}}>
-        {canManage(role)&&!currentStudentId&&(
-          <div style={{textAlign:"center",padding:"40px 20px",color:C.z5,fontSize:"0.875rem"}}>Selecciona un alumno para ver su seguimiento</div>
-        )}
+        {canManage(role)&&!currentStudentId&&(<div style={{textAlign:"center",padding:"40px 20px",color:C.z5,fontSize:"0.875rem"}}>Selecciona un alumno para ver su seguimiento</div>)}
         {isLoadingData&&currentStudentId&&(
           <div style={{textAlign:"center",padding:"40px",color:C.z4,fontSize:"0.875rem"}}>
             <div style={{marginBottom:"6px"}}>Cargando datos...</div>
@@ -1018,12 +987,8 @@ function AppMain({session,systemConfig,onSystemSave,onLogout}){
             </div>
             {tab==="cycles"&&(
               <div style={{display:"flex",flexDirection:"column",gap:"14px"}}>
-                {studentData.cycles.length===0&&canManage(role)&&(
-                  <NewCycleCard studentConfig={currentStudentObj?.config||DEFAULT_CONFIG} onAdd={addFirstCycle}/>
-                )}
-                {studentData.cycles.length===0&&!canManage(role)&&(
-                  <div style={{textAlign:"center",padding:"40px 20px",color:C.z5,fontSize:"0.875rem"}}>No hay ciclos programados aún.</div>
-                )}
+                {studentData.cycles.length===0&&canManage(role)&&(<NewCycleCard studentConfig={currentStudentObj?.config||DEFAULT_CONFIG} onAdd={addFirstCycle}/>)}
+                {studentData.cycles.length===0&&!canManage(role)&&(<div style={{textAlign:"center",padding:"40px 20px",color:C.z5,fontSize:"0.875rem"}}>No hay ciclos programados aún.</div>)}
                 {studentData.cycles.map((cycle,idx)=>(
                   <CycleCard key={cycle.id} cycle={cycle} cycleIndex={idx} isCurrent={idx===displayIdx} role={role}
                     onUpdateCycle={upd=>updateCycle(idx,upd)} onUpdateClass={updateClass}
