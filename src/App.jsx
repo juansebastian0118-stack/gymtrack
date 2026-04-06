@@ -14,8 +14,17 @@ function addDays(iso,n){const d=parseLocal(iso);d.setDate(d.getDate()+n);return 
 function formatDate(iso){if(!iso)return"";const d=parseLocal(iso);return`${String(d.getDate()).padStart(2,"0")}-${MONTHS_SH[d.getMonth()]}-${String(d.getFullYear()).slice(-2)}`;}
 function dow(iso){return parseLocal(iso).getDay();}
 function nextValidDay(iso,weekDays){let c=iso;while(!weekDays.includes(dow(c)))c=addDays(c,1);return c;}
-function defaultTimeOptions(iso){return dow(iso)===6?["07:00","08:00","09:00"]:["05:00","06:00","07:00"];}
-function defaultTime(iso){return defaultTimeOptions(iso)[0];}
+
+// ─── FIX 1: defaultTimeOptions now accepts config to use saved dayTimeOptions ──
+function defaultTimeOptions(iso, config){
+  const d = dow(iso);
+  // Use per-day saved options if available
+  if(config?.dayTimeOptions?.[d]) return config.dayTimeOptions[d];
+  // Fallback: Sat → 7,8,9 / others → 5,6,7
+  return d===6?["07:00","08:00","09:00"]:["05:00","06:00","07:00"];
+}
+function defaultTime(iso, config){return defaultTimeOptions(iso, config)[0];}
+
 function fmt12(t){if(!t)return"";const[h,m]=t.split(":").map(Number);const ap=h<12?"AM":"PM";const hh=h===0?12:h>12?h-12:h;return`${hh}${m?":"+String(m).padStart(2,"0"):""}${ap}`;}
 function doneCount(cls){return cls.filter(c=>c.status==="done").length;}
 function cancelledCount(cls){return cls.filter(c=>c.status==="cancelled").length;}
@@ -24,39 +33,58 @@ function buildSeqNums(cls,target){let n=0;return cls.map(c=>{if(c.status==="resc
 function cycleName(cls){const co={};cls.forEach(c=>{const m=parseLocal(c.date).getMonth();co[m]=(co[m]||0)+1;});const d=Object.entries(co).sort((a,b)=>b[1]-a[1])[0];return d?MONTHS_ES[d[0]]:"Nuevo Ciclo";}
 function slugify(name){return name.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g,"").replace(/[^a-z0-9]+/g,"-").replace(/^-|-$/g,"");}
 
-function generateClasses(startIso,config){
+// ─── FIX 1: generateClasses uses config.dayTimeOptions ───────────────────
+function generateClasses(startIso, config){
   const{classesPerCycle,weekDays}=config;const cls=[];let cursor=startIso;
   while(cls.length<classesPerCycle){
-    if(weekDays.includes(dow(cursor)))cls.push({id:`cls-${Date.now()}-${cls.length}-${Math.random().toString(36).slice(2,5)}`,date:cursor,time:defaultTime(cursor),status:"pending",type:"presencial",notes:""});
+    if(weekDays.includes(dow(cursor))){
+      const opts = defaultTimeOptions(cursor, config);
+      cls.push({
+        id:`cls-${Date.now()}-${cls.length}-${Math.random().toString(36).slice(2,5)}`,
+        date:cursor,
+        time:opts[0],
+        timeOptions:opts,
+        status:"pending",
+        type:"presencial",
+        notes:""
+      });
+    }
     cursor=addDays(cursor,1);
   }
   return cls;
 }
+
 function buildCycle(startIso,config,idx){
   const cls=generateClasses(startIso,config);
   return{id:`cycle-${Date.now()}-${idx}`,name:cycleName(cls),classes:cls,paid:false,amount:config.amount,config:{...config},startDate:cls[0]?.date,endDate:cls[cls.length-1]?.date};
 }
-function recalcForward(classes,changedIdx,config){
+
+// ─── FIX 1: recalcForward also passes config for correct time options ─────
+function recalcForward(classes, changedIdx, config){
   const updated=[...classes];let cursor=addDays(updated[changedIdx].date,1);
   for(let i=changedIdx+1;i<updated.length;i++){
     const s=updated[i].status;if(s==="done"||s==="cancelled"||s==="rescheduled")continue;
     while(!config.weekDays.includes(dow(cursor)))cursor=addDays(cursor,1);
-    updated[i]={...updated[i],date:cursor,time:defaultTime(cursor)};cursor=addDays(cursor,1);
+    const opts = defaultTimeOptions(cursor, config);
+    updated[i]={...updated[i],date:cursor,time:opts[0],timeOptions:opts};
+    cursor=addDays(cursor,1);
   }
   return updated;
 }
-function makeMakeup(classes,config){
+
+function makeMakeup(classes, config){
   const lastDate=classes.reduce((mx,c)=>c.date>mx?c.date:mx,"1970-01-01");
   let cursor=addDays(lastDate,1);while(!config.weekDays.includes(dow(cursor)))cursor=addDays(cursor,1);
-  return{id:`cls-${Date.now()}-mx-${Math.random().toString(36).slice(2,5)}`,date:cursor,time:defaultTime(cursor),status:"pending",type:"presencial",notes:"",isMakeup:true};
+  const opts = defaultTimeOptions(cursor, config);
+  return{id:`cls-${Date.now()}-mx-${Math.random().toString(36).slice(2,5)}`,date:cursor,time:opts[0],timeOptions:opts,status:"pending",type:"presencial",notes:"",isMakeup:true};
 }
+
 function sanitizeCycle(cycle){
   const target=cycle.config.classesPerCycle;
   const activeCount=cycle.classes.filter(c=>c.status!=="rescheduled").length;
   if(activeCount<=target)return cycle;
   const excess=activeCount-target;
-  const classes=[...cycle.classes];
-  let removed=0;
+  const classes=[...cycle.classes];let removed=0;
   for(let i=classes.length-1;i>=0&&removed<excess;i--){if(classes[i].status==="pending"&&classes[i].isMakeup){removed++;classes[i]=null;}}
   for(let i=classes.length-1;i>=0&&removed<excess;i--){if(classes[i]&&classes[i].status==="pending"){removed++;classes[i]=null;}}
   const cleaned=classes.filter(c=>c!==null);
@@ -65,8 +93,6 @@ function sanitizeCycle(cycle){
 function sanitizeCycles(data){return{...data,cycles:data.cycles.map(sanitizeCycle)};}
 
 // ─── FIREBASE ─────────────────────────────────────────────────────────────
-// System config (PINs, users list) stored in gymtrack-system/config
-// Each student data stored in gymtrack-data/{studentId}
 const SYSTEM_REF = ()=>doc(db,"gymtrack-system","config");
 const STUDENT_REF = (id)=>doc(db,"gymtrack-data",id);
 
@@ -109,21 +135,14 @@ function initStudentData(student){
 }
 
 // ─── SESSION ──────────────────────────────────────────────────────────────
-// Memory fallback for Safari private mode where sessionStorage may throw
 let _memSession = null;
 function loadSession(){
-  try{
-    const v=sessionStorage.getItem("gymtrack-session");
-    if(v){_memSession=JSON.parse(v);return _memSession;}
-  }catch{}
+  try{const v=sessionStorage.getItem("gymtrack-session");if(v){_memSession=JSON.parse(v);return _memSession;}}catch{}
   return _memSession;
 }
 function saveSession(s){
   _memSession=s||null;
-  try{
-    if(s)sessionStorage.setItem("gymtrack-session",JSON.stringify(s));
-    else sessionStorage.removeItem("gymtrack-session");
-  }catch{}
+  try{if(s)sessionStorage.setItem("gymtrack-session",JSON.stringify(s));else sessionStorage.removeItem("gymtrack-session");}catch{}
 }
 
 // ─── COLORS ───────────────────────────────────────────────────────────────
@@ -146,7 +165,7 @@ function Badge({label,color}){
 
 // ─── LOGIN SCREEN ─────────────────────────────────────────────────────────
 function LoginScreen({systemConfig,onLogin}){
-  const[step,setStep]=useState("role"); // role | pin
+  const[step,setStep]=useState("role");
   const[selectedRole,setSelectedRole]=useState(null);
   const[selectedStudent,setSelectedStudent]=useState(null);
   const[pin,setPin]=useState("");
@@ -156,8 +175,7 @@ function LoginScreen({systemConfig,onLogin}){
   const students=systemConfig?.students||[];
   const filtered=students.filter(s=>s.name.toLowerCase().includes(search.toLowerCase()));
 
-  function selectRole(role){setSelectedRole(role);setPin("");setError("");
-    if(role==="alumno")setStep("student");else setStep("pin");}
+  function selectRole(role){setSelectedRole(role);setPin("");setError("");if(role==="alumno")setStep("student");else setStep("pin");}
   function selectStudent(s){setSelectedStudent(s);setStep("pin");setPin("");setError("");}
 
   function handleDigit(d){
@@ -182,75 +200,55 @@ function LoginScreen({systemConfig,onLogin}){
 
   return(
     <div style={{minHeight:"100vh",minHeight:"-webkit-fill-available",background:C.bg,display:"flex",alignItems:"center",justifyContent:"center",fontFamily:"'DM Sans',system-ui,sans-serif",padding:"20px"}}>
-      <style>{`
-        @import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;600;700;800&display=swap');
-        *{box-sizing:border-box;-webkit-tap-highlight-color:transparent;}
-        body{margin:0;padding:0;background:#09090b;}
-        input,select,button{font-family:inherit;-webkit-appearance:none;appearance:none;}
-      `}</style>
+      <style>{`@import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;600;700;800&display=swap');*{box-sizing:border-box;-webkit-tap-highlight-color:transparent;}body{margin:0;padding:0;background:#09090b;}input,select,button{font-family:inherit;-webkit-appearance:none;appearance:none;}`}</style>
       <div style={{width:"100%",maxWidth:"380px"}}>
         <div style={{textAlign:"center",marginBottom:"28px"}}>
           <div style={{width:"52px",height:"52px",borderRadius:"14px",background:"linear-gradient(135deg,#0ea5e9,#7c3aed)",display:"flex",alignItems:"center",justifyContent:"center",fontSize:"1.4rem",fontWeight:800,margin:"0 auto 10px"}}>G</div>
           <div style={{fontSize:"1.3rem",fontWeight:800,color:C.z1}}>GymTrack</div>
           <div style={{fontSize:"0.72rem",color:C.z5,marginTop:"3px"}}>Sistema de seguimiento de clases</div>
         </div>
-
         {step==="role"&&(
           <div>
             <div style={{fontSize:"0.82rem",color:C.z4,textAlign:"center",marginBottom:"14px"}}>Selecciona tu perfil</div>
             <div style={{display:"flex",flexDirection:"column",gap:"9px"}}>
               {Object.entries(ROLES).map(([key,r])=>(
                 <button key={key} onClick={()=>selectRole(key)} style={{padding:"13px 18px",borderRadius:"12px",border:`1px solid ${C.bg7}`,background:C.bg9,color:C.z2,fontSize:"0.9rem",fontWeight:600,cursor:"pointer",display:"flex",alignItems:"center",gap:"10px"}}>
-                  <span style={{width:"10px",height:"10px",borderRadius:"50%",background:r.color,flexShrink:0}}/>
-                  {r.label}
+                  <span style={{width:"10px",height:"10px",borderRadius:"50%",background:r.color,flexShrink:0}}/>{r.label}
                 </button>
               ))}
             </div>
           </div>
         )}
-
         {step==="student"&&(
           <div>
             <button onClick={()=>setStep("role")} style={{background:"none",border:"none",color:C.z5,fontSize:"0.75rem",cursor:"pointer",marginBottom:"16px",display:"flex",alignItems:"center",gap:"4px"}}>← Cambiar perfil</button>
             <div style={{fontSize:"0.82rem",color:C.z4,marginBottom:"10px"}}>Selecciona tu nombre</div>
-            <input value={search} onChange={e=>setSearch(e.target.value)} placeholder="Buscar alumno..."
-              style={{width:"100%",background:C.bg8,border:`1px solid ${C.bg7}`,borderRadius:"9px",padding:"8px 12px",color:C.z2,fontSize:"0.875rem",outline:"none",marginBottom:"10px"}}/>
+            <input value={search} onChange={e=>setSearch(e.target.value)} placeholder="Buscar alumno..." style={{width:"100%",background:C.bg8,border:`1px solid ${C.bg7}`,borderRadius:"9px",padding:"8px 12px",color:C.z2,fontSize:"0.875rem",outline:"none",marginBottom:"10px"}}/>
             <div style={{maxHeight:"280px",overflowY:"auto",display:"flex",flexDirection:"column",gap:"6px"}}>
               {filtered.length===0&&<div style={{color:C.z5,fontSize:"0.78rem",textAlign:"center",padding:"20px"}}>No se encontraron alumnos</div>}
               {filtered.map(s=>(
-                <button key={s.id} onClick={()=>selectStudent(s)} style={{padding:"11px 16px",borderRadius:"10px",border:`1px solid ${C.bg7}`,background:C.bg9,color:C.z2,fontSize:"0.875rem",fontWeight:600,cursor:"pointer",textAlign:"left"}}>
-                  {s.name}
-                </button>
+                <button key={s.id} onClick={()=>selectStudent(s)} style={{padding:"11px 16px",borderRadius:"10px",border:`1px solid ${C.bg7}`,background:C.bg9,color:C.z2,fontSize:"0.875rem",fontWeight:600,cursor:"pointer",textAlign:"left"}}>{s.name}</button>
               ))}
             </div>
           </div>
         )}
-
         {step==="pin"&&(
           <div>
             <button onClick={goBack} style={{background:"none",border:"none",color:C.z5,fontSize:"0.75rem",cursor:"pointer",marginBottom:"16px",display:"flex",alignItems:"center",gap:"4px"}}>← Volver</button>
             <div style={{textAlign:"center",marginBottom:"22px"}}>
               <div style={{display:"inline-flex",alignItems:"center",gap:"7px",padding:"5px 13px",borderRadius:"999px",background:C.bg9,border:`1px solid ${C.bg7}`,marginBottom:"14px"}}>
                 <span style={{width:"8px",height:"8px",borderRadius:"50%",background:roleColor}}/>
-                <span style={{fontSize:"0.78rem",color:C.z2,fontWeight:600}}>
-                  {selectedRole==="alumno"?selectedStudent?.name:ROLES[selectedRole]?.label}
-                </span>
+                <span style={{fontSize:"0.78rem",color:C.z2,fontWeight:600}}>{selectedRole==="alumno"?selectedStudent?.name:ROLES[selectedRole]?.label}</span>
               </div>
               <div style={{fontSize:"0.82rem",color:C.z4,marginBottom:"18px"}}>Ingresa tu PIN</div>
               <div style={{display:"flex",justifyContent:"center",gap:"12px",marginBottom:"6px"}}>
-                {[0,1,2,3].map(i=>(
-                  <div key={i} style={{width:"13px",height:"13px",borderRadius:"50%",background:i<pin.length?roleColor:C.bg7,transition:"background 0.15s"}}/>
-                ))}
+                {[0,1,2,3].map(i=><div key={i} style={{width:"13px",height:"13px",borderRadius:"50%",background:i<pin.length?roleColor:C.bg7,transition:"background 0.15s"}}/>)}
               </div>
               {error&&<div style={{fontSize:"0.7rem",color:"#fb7185",marginTop:"7px"}}>{error}</div>}
             </div>
             <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:"9px"}}>
               {[1,2,3,4,5,6,7,8,9,"",0,"⌫"].map((d,i)=>(
-                <button key={i} onClick={()=>d===""?null:d==="⌫"?handleBack():handleDigit(String(d))}
-                  disabled={d===""}
-                  style={{padding:"15px",borderRadius:"11px",fontSize:"1.05rem",fontWeight:700,cursor:d===""?"default":"pointer",border:`1px solid ${C.bg7}`,background:d===""?"transparent":C.bg9,color:d==="⌫"?C.z4:C.z2,opacity:d===""?0:1}}>
-                  {d}
-                </button>
+                <button key={i} onClick={()=>d===""?null:d==="⌫"?handleBack():handleDigit(String(d))} disabled={d===""} style={{padding:"15px",borderRadius:"11px",fontSize:"1.05rem",fontWeight:700,cursor:d===""?"default":"pointer",border:`1px solid ${C.bg7}`,background:d===""?"transparent":C.bg9,color:d==="⌫"?C.z4:C.z2,opacity:d===""?0:1}}>{d}</button>
               ))}
             </div>
           </div>
@@ -260,7 +258,7 @@ function LoginScreen({systemConfig,onLogin}){
   );
 }
 
-// ─── STUDENT SELECTOR (admin/profesor) ────────────────────────────────────
+// ─── STUDENT SELECTOR ─────────────────────────────────────────────────────
 function StudentSelector({students,selectedId,onSelect}){
   const[open,setOpen]=useState(false);
   const[search,setSearch]=useState("");
@@ -275,15 +273,10 @@ function StudentSelector({students,selectedId,onSelect}){
       </button>
       {open&&(
         <div style={{position:"absolute",top:"calc(100% + 6px)",left:0,zIndex:100,background:C.bg9,border:`1px solid ${C.bg7}`,borderRadius:"12px",padding:"8px",minWidth:"220px",maxWidth:"280px",boxShadow:"0 8px 30px rgba(0,0,0,0.5)"}}>
-          <input value={search} onChange={e=>setSearch(e.target.value)} placeholder="Buscar..."
-            style={{width:"100%",background:C.bg8,border:`1px solid ${C.bg7}`,borderRadius:"7px",padding:"6px 10px",color:C.z2,fontSize:"0.78rem",outline:"none",marginBottom:"6px"}}
-            autoFocus/>
+          <input value={search} onChange={e=>setSearch(e.target.value)} placeholder="Buscar..." style={{width:"100%",background:C.bg8,border:`1px solid ${C.bg7}`,borderRadius:"7px",padding:"6px 10px",color:C.z2,fontSize:"0.78rem",outline:"none",marginBottom:"6px"}} autoFocus/>
           <div style={{maxHeight:"200px",overflowY:"auto",display:"flex",flexDirection:"column",gap:"3px"}}>
             {filtered.map(s=>(
-              <button key={s.id} onClick={()=>{onSelect(s.id);setOpen(false);setSearch("");}}
-                style={{padding:"8px 10px",borderRadius:"8px",border:"none",background:s.id===selectedId?C.emBg:"transparent",color:s.id===selectedId?C.em2:C.z3,fontSize:"0.8rem",cursor:"pointer",textAlign:"left",fontWeight:s.id===selectedId?700:400}}>
-                {s.name}
-              </button>
+              <button key={s.id} onClick={()=>{onSelect(s.id);setOpen(false);setSearch("");}} style={{padding:"8px 10px",borderRadius:"8px",border:"none",background:s.id===selectedId?C.emBg:"transparent",color:s.id===selectedId?C.em2:C.z3,fontSize:"0.8rem",cursor:"pointer",textAlign:"left",fontWeight:s.id===selectedId?700:400}}>{s.name}</button>
             ))}
             {filtered.length===0&&<div style={{color:C.z5,fontSize:"0.75rem",padding:"8px",textAlign:"center"}}>Sin resultados</div>}
           </div>
@@ -314,11 +307,7 @@ function AdminPanel({systemConfig,onSave,onClose}){
   }
   function removeStudent(id){setStudents(students.filter(s=>s.id!==id));}
   function updateStudentPin(id,pin){setStudents(students.map(s=>s.id===id?{...s,pin}:s));}
-
-  function handleSave(){
-    onSave({...systemConfig,students,pins,teacherName});
-    setSaved(true);setTimeout(()=>{setSaved(false);onClose();},700);
-  }
+  function handleSave(){onSave({...systemConfig,students,pins,teacherName});setSaved(true);setTimeout(()=>{setSaved(false);onClose();},700);}
 
   return(
     <div style={{position:"fixed",inset:0,zIndex:60,background:"rgba(0,0,0,0.85)",backdropFilter:"blur(6px)",WebkitBackdropFilter:"blur(6px)",display:"flex",alignItems:"center",justifyContent:"center",padding:"16px"}}>
@@ -327,20 +316,15 @@ function AdminPanel({systemConfig,onSave,onClose}){
           <div style={{fontSize:"0.95rem",fontWeight:700,color:C.z1}}>⚙️ Panel de Administración</div>
           <button onClick={onClose} style={{background:"none",border:"none",color:C.z5,cursor:"pointer",fontSize:"1rem"}}>✕</button>
         </div>
-
         <div style={{display:"flex",gap:"3px",padding:"10px 18px 0",borderBottom:`1px solid ${C.bg7}`}}>
           {[{id:"students",l:"👥 Alumnos"},{id:"pins",l:"🔐 PINs"},{id:"config",l:"⚙️ General"}].map(t=>(
             <button key={t.id} onClick={()=>setTab(t.id)} style={{padding:"6px 12px",borderRadius:"8px 8px 0 0",border:"none",background:tab===t.id?C.bg8:"transparent",color:tab===t.id?C.z1:C.z5,fontSize:"0.78rem",fontWeight:600,cursor:"pointer"}}>{t.l}</button>
           ))}
         </div>
-
         <div style={{flex:1,overflowY:"auto",padding:"16px 18px"}}>
-
           {tab==="students"&&(
             <div>
               <div style={{fontSize:"0.75rem",color:C.z4,marginBottom:"12px"}}>Alumnos registrados: <strong style={{color:C.z2}}>{students.length}</strong></div>
-
-              {/* Existing students */}
               <div style={{display:"flex",flexDirection:"column",gap:"6px",marginBottom:"16px"}}>
                 {students.map(s=>(
                   <div key={s.id} style={{background:C.bg8,borderRadius:"9px",padding:"10px 12px",display:"flex",alignItems:"center",gap:"10px"}}>
@@ -351,16 +335,13 @@ function AdminPanel({systemConfig,onSave,onClose}){
                     <div style={{display:"flex",alignItems:"center",gap:"6px"}}>
                       <div style={{display:"flex",alignItems:"center",gap:"4px"}}>
                         <span style={{fontSize:"0.65rem",color:C.z5}}>PIN:</span>
-                        <input type="password" maxLength={4} value={s.pin} onChange={e=>updateStudentPin(s.id,e.target.value.replace(/\D/g,"").slice(0,4))}
-                          style={{width:"52px",background:C.bg,border:`1px solid ${C.bg7}`,borderRadius:"6px",padding:"3px 6px",color:C.z2,fontSize:"0.8rem",outline:"none",textAlign:"center",letterSpacing:"0.2em"}}/>
+                        <input type="password" maxLength={4} value={s.pin} onChange={e=>updateStudentPin(s.id,e.target.value.replace(/\D/g,"").slice(0,4))} style={{width:"52px",background:C.bg,border:`1px solid ${C.bg7}`,borderRadius:"6px",padding:"3px 6px",color:C.z2,fontSize:"0.8rem",outline:"none",textAlign:"center",letterSpacing:"0.2em"}}/>
                       </div>
                       <button onClick={()=>removeStudent(s.id)} style={{background:C.roseBg,border:`1px solid ${C.roseBd}`,color:"#fb7185",borderRadius:"6px",padding:"3px 8px",fontSize:"0.7rem",cursor:"pointer"}}>✕</button>
                     </div>
                   </div>
                 ))}
               </div>
-
-              {/* Add new student */}
               <div style={{background:C.bg8,borderRadius:"10px",padding:"12px"}}>
                 <div style={{fontSize:"0.75rem",fontWeight:600,color:C.z3,marginBottom:"10px"}}>+ Nuevo alumno</div>
                 <div style={{display:"grid",gridTemplateColumns:"1fr 80px",gap:"7px",marginBottom:"8px"}}>
@@ -368,49 +349,33 @@ function AdminPanel({systemConfig,onSave,onClose}){
                   <input type="password" maxLength={4} value={newPin} onChange={e=>setNewPin(e.target.value.replace(/\D/g,"").slice(0,4))} placeholder="PIN" style={{...inp,textAlign:"center",letterSpacing:"0.2em"}}/>
                 </div>
                 <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:"7px",marginBottom:"8px"}}>
-                  <div>
-                    <label style={{fontSize:"0.65rem",color:C.z5,display:"block",marginBottom:"3px"}}>Clases por ciclo</label>
-                    <input type="number" min="1" max="30" value={newConfig.classesPerCycle} onChange={e=>setNewConfig({...newConfig,classesPerCycle:+e.target.value})} style={inp}/>
-                  </div>
-                  <div>
-                    <label style={{fontSize:"0.65rem",color:C.z5,display:"block",marginBottom:"3px"}}>Monto COP</label>
-                    <input type="number" value={newConfig.amount} onChange={e=>setNewConfig({...newConfig,amount:+e.target.value})} style={inp}/>
-                  </div>
+                  <div><label style={{fontSize:"0.65rem",color:C.z5,display:"block",marginBottom:"3px"}}>Clases por ciclo</label><input type="number" min="1" max="30" value={newConfig.classesPerCycle} onChange={e=>setNewConfig({...newConfig,classesPerCycle:+e.target.value})} style={inp}/></div>
+                  <div><label style={{fontSize:"0.65rem",color:C.z5,display:"block",marginBottom:"3px"}}>Monto COP</label><input type="number" value={newConfig.amount} onChange={e=>setNewConfig({...newConfig,amount:+e.target.value})} style={inp}/></div>
                 </div>
                 <div style={{marginBottom:"8px"}}>
                   <label style={{fontSize:"0.65rem",color:C.z5,display:"block",marginBottom:"4px"}}>Días de clase</label>
                   <div style={{display:"flex",flexWrap:"wrap",gap:"4px"}}>
                     {DAY_OPT.map(d=>(
-                      <button key={d.v} onClick={()=>{const days=newConfig.weekDays.includes(d.v)?newConfig.weekDays.filter(x=>x!==d.v):[...newConfig.weekDays,d.v].sort();setNewConfig({...newConfig,weekDays:days});}}
-                        style={{fontSize:"0.68rem",padding:"3px 8px",borderRadius:"6px",cursor:"pointer",border:"none",background:newConfig.weekDays.includes(d.v)?C.sky6:C.bg7,color:newConfig.weekDays.includes(d.v)?"white":C.z4}}>{d.l}</button>
+                      <button key={d.v} onClick={()=>{const days=newConfig.weekDays.includes(d.v)?newConfig.weekDays.filter(x=>x!==d.v):[...newConfig.weekDays,d.v].sort();setNewConfig({...newConfig,weekDays:days});}} style={{fontSize:"0.68rem",padding:"3px 8px",borderRadius:"6px",cursor:"pointer",border:"none",background:newConfig.weekDays.includes(d.v)?C.sky6:C.bg7,color:newConfig.weekDays.includes(d.v)?"white":C.z4}}>{d.l}</button>
                     ))}
                   </div>
                 </div>
-                <button onClick={addStudent} disabled={!newName.trim()||newPin.length!==4}
-                  style={{width:"100%",background:newName.trim()&&newPin.length===4?C.emBg:"rgba(63,63,70,0.3)",border:`1px solid ${newName.trim()&&newPin.length===4?C.emBd:C.bg7}`,color:newName.trim()&&newPin.length===4?C.em2:C.z6,padding:"7px",borderRadius:"8px",fontSize:"0.82rem",cursor:"pointer",fontWeight:700}}>
-                  Agregar alumno
-                </button>
+                <button onClick={addStudent} disabled={!newName.trim()||newPin.length!==4} style={{width:"100%",background:newName.trim()&&newPin.length===4?C.emBg:"rgba(63,63,70,0.3)",border:`1px solid ${newName.trim()&&newPin.length===4?C.emBd:C.bg7}`,color:newName.trim()&&newPin.length===4?C.em2:C.z6,padding:"7px",borderRadius:"8px",fontSize:"0.82rem",cursor:"pointer",fontWeight:700}}>Agregar alumno</button>
               </div>
             </div>
           )}
-
           {tab==="pins"&&(
             <div>
               <div style={{fontSize:"0.75rem",color:C.z4,marginBottom:"14px"}}>PINs de acceso para Admin y Profesor</div>
               {[["admin","Administrador",ROLES.admin.color],["profesor","Profesor",ROLES.profesor.color]].map(([key,label,color])=>(
                 <div key={key} style={{marginBottom:"12px"}}>
-                  <label style={{fontSize:"0.72rem",color:C.z4,display:"flex",alignItems:"center",gap:"6px",marginBottom:"5px"}}>
-                    <span style={{width:"8px",height:"8px",borderRadius:"50%",background:color}}/>
-                    {label}
-                  </label>
-                  <input type="password" maxLength={4} value={pins[key]||""} onChange={e=>setPins({...pins,[key]:e.target.value.replace(/\D/g,"").slice(0,4)})}
-                    placeholder="4 dígitos" style={{...inp,letterSpacing:"0.3em",textAlign:"center"}}/>
+                  <label style={{fontSize:"0.72rem",color:C.z4,display:"flex",alignItems:"center",gap:"6px",marginBottom:"5px"}}><span style={{width:"8px",height:"8px",borderRadius:"50%",background:color}}/>{label}</label>
+                  <input type="password" maxLength={4} value={pins[key]||""} onChange={e=>setPins({...pins,[key]:e.target.value.replace(/\D/g,"").slice(0,4)})} placeholder="4 dígitos" style={{...inp,letterSpacing:"0.3em",textAlign:"center"}}/>
                 </div>
               ))}
               <div style={{fontSize:"0.65rem",color:C.z5,marginTop:"8px"}}>Los PINs de alumnos se editan en la pestaña Alumnos.</div>
             </div>
           )}
-
           {tab==="config"&&(
             <div>
               <div style={{marginBottom:"12px"}}>
@@ -420,11 +385,8 @@ function AdminPanel({systemConfig,onSave,onClose}){
             </div>
           )}
         </div>
-
         <div style={{padding:"12px 18px",borderTop:`1px solid ${C.bg7}`,display:"flex",gap:"8px"}}>
-          <button onClick={handleSave} style={{flex:1,background:saved?"rgba(5,150,105,0.7)":C.sky6,border:"none",color:"white",padding:"8px",borderRadius:"10px",fontSize:"0.875rem",cursor:"pointer",fontWeight:700}}>
-            {saved?"✓ Guardado":"Guardar cambios"}
-          </button>
+          <button onClick={handleSave} style={{flex:1,background:saved?"rgba(5,150,105,0.7)":C.sky6,border:"none",color:"white",padding:"8px",borderRadius:"10px",fontSize:"0.875rem",cursor:"pointer",fontWeight:700}}>{saved?"✓ Guardado":"Guardar cambios"}</button>
           <button onClick={onClose} style={{flex:1,background:C.bg7,border:"none",color:C.z3,padding:"8px",borderRadius:"10px",fontSize:"0.875rem",cursor:"pointer"}}>Cancelar</button>
         </div>
       </div>
@@ -482,27 +444,33 @@ function ReasonModal({title,subtitle,accentColor,reasons,onConfirm,onClose}){
   );
 }
 
-function ClassCard({cls,seqNum,role,onUpdate,onUpdateRecalc,onCancel,onReschedule,isPast}){
+function ClassCard({cls,seqNum,role,cycleConfig,onUpdate,onUpdateRecalc,onCancel,onReschedule,isPast}){
   const[editing,setEditing]=useState(false);
   const[showCancel,setShowCancel]=useState(false);
   const[showResched,setShowResched]=useState(false);
-  const[localTime,setLocalTime]=useState(cls.time||defaultTime(cls.date));
-  const[timeOpts,setTimeOpts]=useState(cls.timeOptions||defaultTimeOptions(cls.date));
+  const[localTime,setLocalTime]=useState(cls.time||defaultTime(cls.date,cycleConfig));
+  const[timeOpts,setTimeOpts]=useState(cls.timeOptions||defaultTimeOptions(cls.date,cycleConfig));
   const[localDate,setLocalDate]=useState(cls.date);
   const[localType,setLocalType]=useState(cls.type||"presencial");
   const[localNotes,setLocalNotes]=useState(cls.notes||"");
-  useEffect(()=>{setLocalTime(cls.time||defaultTime(cls.date));setTimeOpts(cls.timeOptions||defaultTimeOptions(cls.date));setLocalDate(cls.date);setLocalType(cls.type||"presencial");setLocalNotes(cls.notes||"");},[cls.id,cls.date,cls.time]);
+  useEffect(()=>{setLocalTime(cls.time||defaultTime(cls.date,cycleConfig));setTimeOpts(cls.timeOptions||defaultTimeOptions(cls.date,cycleConfig));setLocalDate(cls.date);setLocalType(cls.type||"presencial");setLocalNotes(cls.notes||"");},[cls.id,cls.date,cls.time]);
   const isDone=cls.status==="done",isCanc=cls.status==="cancelled",isReschd=cls.status==="rescheduled",isPend=cls.status==="pending",isToday=isoToday()===cls.date;
   const dayName=DAYS_ES[parseLocal(cls.date).getDay()];
-  function save(){const dc=localDate!==cls.date;const newOpts=dc?defaultTimeOptions(localDate):timeOpts;const newTime=dc?defaultTime(localDate):localTime;const upd={...cls,time:newTime,timeOptions:newOpts,notes:localNotes,type:localType,date:localDate};if(dc)onUpdateRecalc(upd);else onUpdate(upd);setEditing(false);}
+  function save(){
+    const dc=localDate!==cls.date;
+    const newOpts=dc?defaultTimeOptions(localDate,cycleConfig):timeOpts;
+    const newTime=dc?defaultTime(localDate,cycleConfig):localTime;
+    const upd={...cls,time:newTime,timeOptions:newOpts,notes:localNotes,type:localType,date:localDate};
+    if(dc)onUpdateRecalc(upd);else onUpdate(upd);setEditing(false);
+  }
   let cardBg,cardBd,numBg,numColor;
   if(isDone){cardBg="rgba(2,44,34,0.3)";cardBd=C.emBd;numBg=C.emBg;numColor=C.em2;}
   else if(isCanc){cardBg=C.roseBg;cardBd=C.roseBd;numBg="rgba(244,63,94,0.2)";numColor="#fb7185";}
   else if(isReschd){cardBg=C.oraBg;cardBd=C.oraBd;numBg="rgba(249,115,22,0.2)";numColor="#fb923c";}
   else if(isToday){cardBg=C.skyBg;cardBd=C.skyBd;numBg="rgba(14,165,233,0.2)";numColor=C.sky;}
   else{cardBg="rgba(39,39,42,0.45)";cardBd=C.bg7;numBg=C.bg7;numColor=C.z3;}
-  const displayOpts=cls.timeOptions||defaultTimeOptions(cls.date);
-  const agreedTime=cls.time||defaultTime(cls.date);
+  const displayOpts=cls.timeOptions||defaultTimeOptions(cls.date,cycleConfig);
+  const agreedTime=cls.time||defaultTime(cls.date,cycleConfig);
   const btn={fontSize:"0.68rem",padding:"4px 7px",borderRadius:"7px",cursor:"pointer",fontWeight:600,border:"none"};
   const inp={width:"100%",background:C.bg,border:`1px solid ${C.bg7}`,borderRadius:"7px",padding:"6px 8px",color:C.z2,fontSize:"0.875rem",outline:"none",boxSizing:"border-box"};
   return(
@@ -567,22 +535,54 @@ function ClassCard({cls,seqNum,role,onUpdate,onUpdateRecalc,onCancel,onReschedul
   );
 }
 
-// ─── NEW CYCLE CARD ───────────────────────────────────────────────────────
+// ─── FIX 2: NewCycleCard with per-day time editor ─────────────────────────
+const DAY_NAMES_SHORT = {0:"Dom",1:"Lun",2:"Mar",3:"Mié",4:"Jue",5:"Vie",6:"Sáb"};
+
+// Build default dayTimeOptions for selected days (Sat → 7,8,9; others → 5,6,7)
+function buildDefaultDayTimeOptions(weekDays){
+  const result={};
+  weekDays.forEach(d=>{result[d]=d===6?["07:00","08:00","09:00"]:["05:00","06:00","07:00"];});
+  return result;
+}
+
 function NewCycleCard({studentConfig,onAdd}){
   const[startDate,setStartDate]=useState(isoToday());
-  const[config,setConfig]=useState({...studentConfig});
+  const[config,setConfig]=useState(()=>{
+    const base={...studentConfig};
+    if(!base.dayTimeOptions)base.dayTimeOptions=buildDefaultDayTimeOptions(base.weekDays);
+    return base;
+  });
+  const[editingTimesFor,setEditingTimesFor]=useState(null); // dow number or null
+
   const DAY_OPT=[{v:2,l:"Mar"},{v:4,l:"Jue"},{v:6,l:"Sáb"},{v:1,l:"Lun"},{v:3,l:"Mié"},{v:5,l:"Vie"},{v:0,l:"Dom"}];
   const inp={width:"100%",background:C.bg,border:`1px solid ${C.bg7}`,borderRadius:"8px",padding:"7px 10px",color:C.z2,fontSize:"0.875rem",outline:"none",boxSizing:"border-box"};
+
+  function toggleDay(d){
+    const days=config.weekDays.includes(d)?config.weekDays.filter(x=>x!==d):[...config.weekDays,d].sort();
+    const dto={...config.dayTimeOptions};
+    if(!days.includes(d))delete dto[d];
+    else if(!dto[d])dto[d]=d===6?["07:00","08:00","09:00"]:["05:00","06:00","07:00"];
+    setConfig({...config,weekDays:days,dayTimeOptions:dto});
+    if(editingTimesFor===d)setEditingTimesFor(null);
+  }
+
+  function updateDayTime(d,idx,val){
+    const dto={...config.dayTimeOptions,[d]:[...config.dayTimeOptions[d]]};
+    dto[d][idx]=val;
+    setConfig({...config,dayTimeOptions:dto});
+  }
+
   return(
     <div style={{borderRadius:"14px",border:`2px dashed ${C.sky6}`,background:"rgba(14,165,233,0.04)",padding:"20px"}}>
       <div style={{display:"flex",alignItems:"center",gap:"8px",marginBottom:"16px"}}>
         <div style={{width:"28px",height:"28px",borderRadius:"8px",background:C.skyBg,border:`1px solid ${C.skyBd}`,display:"flex",alignItems:"center",justifyContent:"center",fontSize:"0.9rem"}}>📅</div>
         <div>
           <div style={{fontSize:"0.9rem",fontWeight:700,color:C.sky}}>Crear primer ciclo</div>
-          <div style={{fontSize:"0.65rem",color:C.z5}}>Configura el ciclo y la fecha de inicio</div>
+          <div style={{fontSize:"0.65rem",color:C.z5}}>Configura el ciclo, días y horarios predeterminados</div>
         </div>
       </div>
-      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:"10px",marginBottom:"10px"}}>
+
+      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:"10px",marginBottom:"14px"}}>
         <div>
           <label style={{fontSize:"0.68rem",color:C.z4,display:"block",marginBottom:"4px"}}>Fecha de inicio</label>
           <input type="date" value={startDate} onChange={e=>setStartDate(e.target.value)} style={inp}/>
@@ -595,16 +595,53 @@ function NewCycleCard({studentConfig,onAdd}){
           <label style={{fontSize:"0.68rem",color:C.z4,display:"block",marginBottom:"4px"}}>Monto (COP)</label>
           <input type="number" value={config.amount} onChange={e=>setConfig({...config,amount:+e.target.value})} style={inp}/>
         </div>
-        <div>
-          <label style={{fontSize:"0.68rem",color:C.z4,display:"block",marginBottom:"4px"}}>Días de clase</label>
-          <div style={{display:"flex",flexWrap:"wrap",gap:"4px",marginTop:"2px"}}>
-            {DAY_OPT.map(d=>(
-              <button key={d.v} onClick={()=>{const days=config.weekDays.includes(d.v)?config.weekDays.filter(x=>x!==d.v):[...config.weekDays,d.v].sort();setConfig({...config,weekDays:days});}}
-                style={{fontSize:"0.65rem",padding:"3px 7px",borderRadius:"6px",cursor:"pointer",border:"none",background:config.weekDays.includes(d.v)?C.sky6:C.bg8,color:config.weekDays.includes(d.v)?"white":C.z4}}>{d.l}</button>
+      </div>
+
+      {/* Day selector */}
+      <div style={{marginBottom:"14px"}}>
+        <label style={{fontSize:"0.68rem",color:C.z4,display:"block",marginBottom:"6px"}}>Días de clase · toca 🕐 para editar horarios</label>
+        <div style={{display:"flex",flexWrap:"wrap",gap:"5px"}}>
+          {DAY_OPT.map(d=>{
+            const active=config.weekDays.includes(d.v);
+            const editing=editingTimesFor===d.v;
+            return(
+              <div key={d.v} style={{display:"flex",alignItems:"center",borderRadius:"8px",border:`1px solid ${active?(editing?C.sky:C.sky6):C.bg7}`,overflow:"hidden"}}>
+                <button onClick={()=>toggleDay(d.v)} style={{fontSize:"0.7rem",padding:"4px 8px",cursor:"pointer",border:"none",background:active?(editing?C.skyBg:"rgba(2,132,199,0.25)"):"transparent",color:active?"white":C.z5,fontWeight:active?700:400}}>
+                  {d.l}
+                </button>
+                {active&&(
+                  <button onClick={()=>setEditingTimesFor(editing?null:d.v)} style={{fontSize:"0.65rem",padding:"4px 5px",cursor:"pointer",border:"none",borderLeft:`1px solid ${editing?C.skyBd:C.bg7}`,background:editing?C.skyBg:C.bg8,color:editing?C.sky:C.z5}} title="Editar horarios">🕐</button>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      </div>
+
+      {/* Per-day time editor */}
+      {editingTimesFor!==null&&config.dayTimeOptions[editingTimesFor]&&(
+        <div style={{background:C.skyBg,border:`1px solid ${C.skyBd}`,borderRadius:"10px",padding:"12px",marginBottom:"14px"}}>
+          <div style={{fontSize:"0.72rem",fontWeight:700,color:C.sky,marginBottom:"8px"}}>
+            Horarios predeterminados — {DAY_NAMES_SHORT[editingTimesFor]}
+          </div>
+          <div style={{fontSize:"0.62rem",color:C.z4,marginBottom:"8px"}}>
+            El 1.º será la hora acordada por defecto al generar clases
+          </div>
+          <div style={{display:"flex",flexDirection:"column",gap:"6px"}}>
+            {config.dayTimeOptions[editingTimesFor].map((t,i)=>(
+              <div key={i} style={{display:"flex",alignItems:"center",gap:"8px"}}>
+                <span style={{fontSize:"0.65rem",color:i===0?C.em2:C.z5,fontWeight:i===0?700:400,minWidth:"52px"}}>
+                  {i===0?"1.ª (acordada)":i===1?"2.ª opción":"3.ª opción"}
+                </span>
+                <input type="time" value={t} onChange={e=>updateDayTime(editingTimesFor,i,e.target.value)}
+                  style={{flex:1,background:C.bg,border:`1px solid ${i===0?C.emBd:C.bg7}`,borderRadius:"7px",padding:"5px 8px",color:i===0?C.em2:C.z2,fontSize:"0.82rem",outline:"none"}}/>
+                <span style={{fontSize:"0.65rem",color:C.z5,minWidth:"38px"}}>{fmt12(t)}</span>
+              </div>
             ))}
           </div>
         </div>
-      </div>
+      )}
+
       <button onClick={()=>onAdd(startDate,config)} disabled={config.weekDays.length===0}
         style={{width:"100%",background:config.weekDays.length>0?C.sky6:"rgba(63,63,70,0.4)",border:"none",color:config.weekDays.length>0?"white":C.z6,padding:"10px",borderRadius:"10px",fontSize:"0.875rem",cursor:config.weekDays.length>0?"pointer":"not-allowed",fontWeight:700}}>
         Crear ciclo →
@@ -643,7 +680,8 @@ function CycleCard({cycle,cycleIndex,isCurrent,role,onUpdateCycle,onUpdateClass,
               {isCurrent?<span style={{fontSize:"0.62rem",padding:"2px 7px",borderRadius:"999px",background:C.sky6,color:"white",fontWeight:700}}>ACTUAL</span>:<span style={{fontSize:"0.62rem",padding:"2px 7px",borderRadius:"999px",background:C.bg7,color:C.z4}}>Ciclo {cycleIndex+1}</span>}
               <span style={{fontSize:"1.05rem",fontWeight:700,color:"white"}}>{cycle.name}</span>
             </div>
-            <div style={{fontSize:"0.68rem",color:C.z4}}>{formatDate(cycle.startDate)} → {formatDate(cycle.endDate)}</div>
+            {/* FIX 1: show real startDate/endDate from first/last class */}
+            <div style={{fontSize:"0.68rem",color:C.z4}}>{formatDate(cycle.classes[0]?.date||cycle.startDate)} → {formatDate(cycle.classes[cycle.classes.length-1]?.date||cycle.endDate)}</div>
           </div>
           {canManage(role)&&<button onClick={()=>onUpdateCycle({...cycle,paid:!cycle.paid})} style={{flexShrink:0,padding:"5px 11px",borderRadius:"9px",fontSize:"0.78rem",fontWeight:700,cursor:"pointer",border:"none",background:cycle.paid?"rgba(5,150,105,0.65)":C.bg8,color:cycle.paid?"white":C.z3}}>
             {cycle.paid?"💳 Pagado":"💰 Sin Pagar"}
@@ -684,7 +722,7 @@ function CycleCard({cycle,cycleIndex,isCurrent,role,onUpdateCycle,onUpdateClass,
         <div style={{position:"fixed",inset:0,zIndex:50,background:"rgba(0,0,0,0.8)",backdropFilter:"blur(6px)",WebkitBackdropFilter:"blur(6px)",display:"flex",alignItems:"center",justifyContent:"center",padding:"16px"}}>
           <div style={{background:C.bg9,border:`1px solid ${C.ambBd}`,borderRadius:"14px",padding:"18px",width:"100%",maxWidth:"370px"}}>
             <div style={{fontSize:"0.95rem",fontWeight:700,color:C.amb,marginBottom:"7px"}}>🔄 Reiniciar Ciclo {cycleIndex+1}: {cycle.name}</div>
-            <p style={{fontSize:"0.7rem",color:C.z4,marginBottom:"14px",lineHeight:1.6}}>Se regeneran todas las clases de este ciclo con fechas correctas a partir de la última clase del ciclo anterior.<br/><strong style={{color:"#fb7185"}}>Todas las clases actuales serán reemplazadas.</strong></p>
+            <p style={{fontSize:"0.7rem",color:C.z4,marginBottom:"14px",lineHeight:1.6}}>Se regeneran todas las clases de este ciclo.<br/><strong style={{color:"#fb7185"}}>Todas las clases actuales serán reemplazadas.</strong></p>
             <div style={{display:"flex",gap:"7px"}}>
               <button onClick={()=>{onResetCycle();setConfirmReset(false);}} style={{flex:1,background:C.ambBg,border:`1px solid ${C.ambBd}`,color:C.amb,padding:"7px",borderRadius:"9px",fontSize:"0.875rem",cursor:"pointer",fontWeight:700}}>Sí, reiniciar</button>
               <button onClick={()=>setConfirmReset(false)} style={{flex:1,background:C.bg8,border:`1px solid ${C.bg7}`,color:C.z3,padding:"7px",borderRadius:"9px",fontSize:"0.875rem",cursor:"pointer"}}>Cancelar</button>
@@ -696,7 +734,7 @@ function CycleCard({cycle,cycleIndex,isCurrent,role,onUpdateCycle,onUpdateClass,
         <div style={{position:"fixed",inset:0,zIndex:50,background:"rgba(0,0,0,0.8)",backdropFilter:"blur(6px)",WebkitBackdropFilter:"blur(6px)",display:"flex",alignItems:"center",justifyContent:"center",padding:"16px"}}>
           <div style={{background:C.bg9,border:`1px solid ${C.roseBd}`,borderRadius:"14px",padding:"18px",width:"100%",maxWidth:"370px"}}>
             <div style={{fontSize:"0.95rem",fontWeight:700,color:"#fb7185",marginBottom:"7px"}}>🗑️ Eliminar Ciclo {cycleIndex+1}: {cycle.name}</div>
-            <p style={{fontSize:"0.7rem",color:C.z4,marginBottom:"14px",lineHeight:1.6}}>Esta acción <strong style={{color:"#fb7185"}}>elimina permanentemente</strong> este ciclo. No se puede deshacer.</p>
+            <p style={{fontSize:"0.7rem",color:C.z4,marginBottom:"14px",lineHeight:1.6}}>Esta acción <strong style={{color:"#fb7185"}}>elimina permanentemente</strong> este ciclo.</p>
             <div style={{display:"flex",gap:"7px"}}>
               <button onClick={()=>{onDeleteCycle();setConfirmDelete(false);}} style={{flex:1,background:C.roseBg,border:`1px solid ${C.roseBd}`,color:"#fb7185",padding:"7px",borderRadius:"9px",fontSize:"0.875rem",cursor:"pointer",fontWeight:700}}>Sí, eliminar</button>
               <button onClick={()=>setConfirmDelete(false)} style={{flex:1,background:C.bg8,border:`1px solid ${C.bg7}`,color:C.z3,padding:"7px",borderRadius:"9px",fontSize:"0.875rem",cursor:"pointer"}}>Cancelar</button>
@@ -732,6 +770,7 @@ function CycleCard({cycle,cycleIndex,isCurrent,role,onUpdateCycle,onUpdateClass,
           </div>
           {cycle.classes.map((cls,i)=>(
             <ClassCard key={cls.id} cls={cls} seqNum={seqNums[i]} isPast={cls.date<isoToday()} role={role}
+              cycleConfig={cycle.config}
               onUpdate={upd=>onUpdateClass(cycleIndex,i,upd)}
               onUpdateRecalc={upd=>onUpdateClassRecalc(cycleIndex,i,upd)}
               onCancel={c=>onCancelClass(cycleIndex,i,c)}
@@ -744,7 +783,6 @@ function CycleCard({cycle,cycleIndex,isCurrent,role,onUpdateCycle,onUpdateClass,
 }
 
 // ─── MAIN APP ─────────────────────────────────────────────────────────────
-// AppShell handles auth only — no hooks that could violate Rules of Hooks
 export default function App(){
   const[session,setSession]=useState(()=>{
     try{const v=sessionStorage.getItem("gymtrack-session");return v?JSON.parse(v):null;}catch{return null;}
@@ -765,7 +803,6 @@ export default function App(){
   return <AppMain session={session} systemConfig={systemConfig} onSystemSave={cfg=>{setSystemConfig(cfg);saveSystemConfig(cfg);}} onLogout={()=>{saveSession(null);setSession(null);}}/>;
 }
 
-// AppMain contains all the app logic — session is guaranteed non-null here
 function AppMain({session,systemConfig,onSystemSave,onLogout}){
   const[studentData,setStudentData]=useState(null);
   const[selectedStudentId,setSelectedStudentId]=useState(null);
@@ -777,22 +814,16 @@ function AppMain({session,systemConfig,onSystemSave,onLogout}){
   const isFirstLoad=useRef(true);
   const unsubStudent=useRef(null);
 
-
-
-  // When session changes or selectedStudentId changes, subscribe to student data
   useEffect(()=>{
     const studentId=session.role==="alumno"?session.studentId:selectedStudentId;
     if(!studentId){setStudentData(null);setLoading(false);return;}
-
     if(unsubStudent.current)unsubStudent.current();
     setLoading(true);
-
     const unsub=onSnapshot(STUDENT_REF(studentId),async snap=>{
       if(snap.exists()){
         setStudentData(sanitizeCycles(snap.data().payload));
         setLastSaved(snap.data().updatedAt);
       } else {
-        // Create initial data for this student
         const sysConf=systemConfig||DEFAULT_SYSTEM;
         const student=sysConf.students?.find(s=>s.id===studentId);
         const init=initStudentData(student||{name:studentId,config:DEFAULT_CONFIG});
@@ -803,21 +834,17 @@ function AppMain({session,systemConfig,onSystemSave,onLogout}){
       setLoading(false);
       isFirstLoad.current=false;
     },err=>{console.error("Student data error:",err);setLoading(false);});
-
     unsubStudent.current=unsub;
     return()=>unsub();
   },[session,selectedStudentId,systemConfig?.teacherName]);
 
-  // For admin/profesor: auto-select first student if none selected
   useEffect(()=>{
     if(session&&session.role!=="alumno"&&!selectedStudentId&&systemConfig?.students?.length>0){
       setSelectedStudentId(systemConfig.students[0].id);
     }
   },[session.role,systemConfig?.students?.length]);
 
-
-
-  const currentStudentId = session.role==="alumno" ? session.studentId : selectedStudentId;
+  const currentStudentId=session.role==="alumno"?session.studentId:selectedStudentId;
 
   function persist(nd){
     if(!currentStudentId)return;
@@ -826,12 +853,29 @@ function AppMain({session,systemConfig,onSystemSave,onLogout}){
     saveStudentData(currentStudentId,clean).then(()=>{setSaving(false);setLastSaved(new Date().toISOString());});
   }
 
-  function saveSystem(cfg){ onSystemSave(cfg); }
+  function saveSystem(cfg){onSystemSave(cfg);}
 
   function updateCycle(idx,upd){const c=[...studentData.cycles];c[idx]=upd;persist({...studentData,cycles:c});}
-  function updateClass(ci,li,upd){const cycles=[...studentData.cycles];const cls=[...cycles[ci].classes];cls[li]=upd;cycles[ci]={...cycles[ci],classes:cls};persist({...studentData,cycles});}
-  function updateClassRecalc(ci,li,upd){const cycles=[...studentData.cycles];let cls=[...cycles[ci].classes];cls[li]=upd;cls=recalcForward(cls,li,cycles[ci].config);cycles[ci]={...cycles[ci],classes:cls,endDate:cls[cls.length-1]?.date,name:cycleName(cls)};persist({...studentData,cycles});}
+
+  function updateClass(ci,li,upd){
+    const cycles=[...studentData.cycles];const cls=[...cycles[ci].classes];cls[li]=upd;
+    cycles[ci]={...cycles[ci],classes:cls};
+    persist({...studentData,cycles});
+  }
+
+  // ─── FIX 1: update startDate when first class date changes ───────────────
+  function updateClassRecalc(ci,li,upd){
+    const cycles=[...studentData.cycles];let cls=[...cycles[ci].classes];
+    cls[li]=upd;
+    cls=recalcForward(cls,li,cycles[ci].config);
+    const newStart=cls[0]?.date||cycles[ci].startDate; // always take first class date
+    const newEnd=cls[cls.length-1]?.date||cycles[ci].endDate;
+    cycles[ci]={...cycles[ci],classes:cls,startDate:newStart,endDate:newEnd,name:cycleName(cls)};
+    persist({...studentData,cycles});
+  }
+
   function cancelClass(ci,li,cancelled){const cycles=[...studentData.cycles];const cls=[...cycles[ci].classes];cls[li]=cancelled;cycles[ci]={...cycles[ci],classes:cls};persist({...studentData,cycles});}
+
   function rescheduleClass(ci,li,reschd){
     const cycles=[...studentData.cycles];const cycle=cycles[ci];let cls=[...cycle.classes];
     cls[li]=reschd;
@@ -840,6 +884,7 @@ function AppMain({session,systemConfig,onSystemSave,onLogout}){
     cycles[ci]={...cycle,classes:cls,endDate:cls[cls.length-1].date,name:cycleName(cls)};
     persist({...studentData,cycles});
   }
+
   function resetCycle(cycleIdx){
     const cycles=[...studentData.cycles];const cycle=cycles[cycleIdx];const config=cycle.config;
     const prevCycle=cycles[cycleIdx-1];
@@ -847,13 +892,18 @@ function AppMain({session,systemConfig,onSystemSave,onLogout}){
     const freshStart=nextValidDay(addDays(prevLastDate,1),config.weekDays);
     const newClasses=[];let cursor=freshStart;
     while(newClasses.length<config.classesPerCycle){
-      if(config.weekDays.includes(dow(cursor)))newClasses.push({id:`cls-${Date.now()}-${newClasses.length}-${Math.random().toString(36).slice(2,5)}`,date:cursor,time:defaultTime(cursor),status:"pending",type:"presencial",notes:""});
+      if(config.weekDays.includes(dow(cursor))){
+        const opts=defaultTimeOptions(cursor,config);
+        newClasses.push({id:`cls-${Date.now()}-${newClasses.length}-${Math.random().toString(36).slice(2,5)}`,date:cursor,time:opts[0],timeOptions:opts,status:"pending",type:"presencial",notes:""});
+      }
       cursor=addDays(cursor,1);
     }
     cycles[cycleIdx]={...cycle,classes:newClasses,startDate:newClasses[0].date,endDate:newClasses[newClasses.length-1].date,name:cycleName(newClasses)};
     persist({...studentData,cycles});
   }
+
   function deleteCycle(idx){persist({...studentData,cycles:studentData.cycles.filter((_,i)=>i!==idx)});}
+
   function addNextCycle(){
     const last=studentData.cycles[studentData.cycles.length-1];if(!last)return;
     const config=last.config||DEFAULT_CONFIG;
@@ -862,10 +912,12 @@ function AppMain({session,systemConfig,onSystemSave,onLogout}){
     persist({...studentData,cycles:[...studentData.cycles,buildCycle(nextStart,config,Date.now())]});
   }
 
+  // ─── FIX 2: save dayTimeOptions from first cycle into config ─────────────
   function addFirstCycle(startDate,config){
     const start=nextValidDay(startDate,config.weekDays);
     const cycle=buildCycle(start,config,Date.now());
-    persist({...studentData,cycles:[cycle]});
+    // Persist the dayTimeOptions so subsequent cycles inherit them
+    persist({...studentData,cycles:[cycle],globalConfig:{...studentData.globalConfig,...config}});
   }
 
   function exportCSV(){
@@ -879,9 +931,7 @@ function AppMain({session,systemConfig,onSystemSave,onLogout}){
 
   const role=session.role;
   const currentStudentObj=systemConfig.students?.find(s=>s.id===currentStudentId);
-
   const isLoadingData=loading||(!studentData&&!!currentStudentId);
-
   const currentIdx=studentData?studentData.cycles.findIndex(c=>(doneCount(c.classes)+cancelledCount(c.classes))<c.config.classesPerCycle):-1;
   const displayIdx=currentIdx===-1?(studentData?.cycles.length-1||0):currentIdx;
   const curCycle=studentData?.cycles[displayIdx];
@@ -893,13 +943,7 @@ function AppMain({session,systemConfig,onSystemSave,onLogout}){
 
   return(
     <div style={{minHeight:"100vh",minHeight:"-webkit-fill-available",background:C.bg,color:C.z1,fontFamily:"'DM Sans',system-ui,sans-serif"}}>
-      <style>{`
-        @import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700;800&display=swap');
-        *{box-sizing:border-box;-webkit-tap-highlight-color:transparent;}
-        body{margin:0;padding:0;background:#09090b;}
-        input,select,button{font-family:inherit;-webkit-appearance:none;appearance:none;}
-        input[type=date],input[type=time]{-webkit-appearance:none;}
-      `}</style>
+      <style>{`@import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700;800&display=swap');*{box-sizing:border-box;-webkit-tap-highlight-color:transparent;}body{margin:0;padding:0;background:#09090b;}input,select,button{font-family:inherit;-webkit-appearance:none;appearance:none;}input[type=date],input[type=time]{-webkit-appearance:none;}`}</style>
 
       {showAdmin&&<AdminPanel systemConfig={systemConfig} onSave={saveSystem} onClose={()=>setShowAdmin(false)}/>}
 
@@ -916,41 +960,31 @@ function AppMain({session,systemConfig,onSystemSave,onLogout}){
               </div>
             </div>
           </div>
-
-          {/* Student selector for admin/profesor */}
           {canManage(role)&&systemConfig.students?.length>0&&(
             <StudentSelector students={systemConfig.students} selectedId={selectedStudentId} onSelect={id=>{setSelectedStudentId(id);setTab("cycles");setLoading(true);}}/>
           )}
-
           <div style={{display:"flex",alignItems:"center",gap:"5px",flexShrink:0}}>
             {saving?<span style={{fontSize:"0.6rem",color:C.sky}}>💾</span>:lastSaved&&<span style={{fontSize:"0.6rem",color:C.z6}}>✓</span>}
             {canManage(role)&&<button onClick={exportCSV} style={btnA} title="Exportar Excel">⬇️</button>}
-            {role==="admin"&&<button onClick={()=>setShowAdmin(true)} style={btnA} title="Administración">⚙️</button>}
+            {/* FIX 3: show ⚙️ for admin AND profesor */}
+            {canManage(role)&&<button onClick={()=>setShowAdmin(true)} style={btnA} title="Administración">⚙️</button>}
             <button onClick={()=>{setStudentData(null);setSelectedStudentId(null);onLogout();}} style={{...btnA,color:"#fb7185"}} title="Cerrar sesión">⏏️</button>
           </div>
         </div>
       </div>
 
       <div style={{maxWidth:"680px",margin:"0 auto",padding:"18px 14px",display:"flex",flexDirection:"column",gap:"14px"}}>
-
-        {/* No student selected */}
         {canManage(role)&&!currentStudentId&&(
-          <div style={{textAlign:"center",padding:"40px 20px",color:C.z5,fontSize:"0.875rem"}}>
-            Selecciona un alumno para ver su seguimiento
-          </div>
+          <div style={{textAlign:"center",padding:"40px 20px",color:C.z5,fontSize:"0.875rem"}}>Selecciona un alumno para ver su seguimiento</div>
         )}
-
-        {/* Loading */}
         {isLoadingData&&currentStudentId&&(
           <div style={{textAlign:"center",padding:"40px",color:C.z4,fontSize:"0.875rem"}}>
             <div style={{marginBottom:"6px"}}>Cargando datos...</div>
             <div style={{fontSize:"0.72rem",color:C.z6}}>{currentStudentObj?.name||currentStudentId}</div>
           </div>
         )}
-
         {!isLoadingData&&studentData&&(
           <>
-            {/* Student name header for admin/profesor */}
             {canManage(role)&&(
               <div style={{background:"rgba(14,165,233,0.07)",border:`1px solid ${C.skyBd}`,borderRadius:"10px",padding:"10px 14px",display:"flex",alignItems:"center",justifyContent:"space-between"}}>
                 <div>
@@ -963,8 +997,6 @@ function AppMain({session,systemConfig,onSystemSave,onLogout}){
                 </div>
               </div>
             )}
-
-            {/* Stats */}
             <div style={{display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:"7px"}}>
               {[
                 {label:"Realizadas",value:totalDone,sub:`de ${totalTarget}`,color:C.em},
@@ -979,23 +1011,18 @@ function AppMain({session,systemConfig,onSystemSave,onLogout}){
                 </div>
               ))}
             </div>
-
-            {/* Tabs */}
             <div style={{display:"flex",gap:"3px",background:C.bg9,borderRadius:"11px",padding:"3px"}}>
               {[{id:"cycles",label:"📅 Ciclos"},{id:"history",label:"📊 Historial"}].map(t=>(
                 <button key={t.id} onClick={()=>setTab(t.id)} style={{flex:1,padding:"7px",borderRadius:"8px",fontSize:"0.85rem",fontWeight:600,cursor:"pointer",border:"none",transition:"all 0.15s",background:tab===t.id?C.bg7:"transparent",color:tab===t.id?C.z1:C.z5}}>{t.label}</button>
               ))}
             </div>
-
             {tab==="cycles"&&(
               <div style={{display:"flex",flexDirection:"column",gap:"14px"}}>
                 {studentData.cycles.length===0&&canManage(role)&&(
-                  <NewCycleCard studentConfig={systemConfig.students?.find(s=>s.id===currentStudentId)?.config||DEFAULT_CONFIG} onAdd={addFirstCycle}/>
+                  <NewCycleCard studentConfig={currentStudentObj?.config||DEFAULT_CONFIG} onAdd={addFirstCycle}/>
                 )}
                 {studentData.cycles.length===0&&!canManage(role)&&(
-                  <div style={{textAlign:"center",padding:"40px 20px",color:C.z5,fontSize:"0.875rem"}}>
-                    No hay ciclos programados aún. El profesor los configurará pronto.
-                  </div>
+                  <div style={{textAlign:"center",padding:"40px 20px",color:C.z5,fontSize:"0.875rem"}}>No hay ciclos programados aún.</div>
                 )}
                 {studentData.cycles.map((cycle,idx)=>(
                   <CycleCard key={cycle.id} cycle={cycle} cycleIndex={idx} isCurrent={idx===displayIdx} role={role}
@@ -1007,7 +1034,6 @@ function AppMain({session,systemConfig,onSystemSave,onLogout}){
                 {canManage(role)&&studentData.cycles.length>0&&<button onClick={addNextCycle} style={{padding:"11px",borderRadius:"14px",border:`2px dashed ${C.bg7}`,background:"transparent",color:C.z5,fontSize:"0.85rem",cursor:"pointer"}}>+ Agregar ciclo siguiente</button>}
               </div>
             )}
-
             {tab==="history"&&(
               <div style={{display:"flex",flexDirection:"column",gap:"10px"}}>
                 <div style={{fontSize:"0.85rem",fontWeight:600,color:C.z4}}>Historial completo</div>
