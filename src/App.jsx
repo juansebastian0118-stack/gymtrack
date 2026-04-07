@@ -194,6 +194,8 @@ function LoginScreen({systemConfig,onLogin}){
 
   // Cycle through images every 4s
   useEffect(()=>{const t=setInterval(()=>setImgIdx(i=>(i+1)%GYM_IMAGES.length),4000);return()=>clearInterval(t);},[]);
+  // Admin shortcut: clicking it goes straight to PIN step as admin
+  function goAdmin(){setSelectedRole("admin");setPin("");setError("");setStep("pin");}
 
   const students=systemConfig?.students||[];
   const filtered=students.filter(s=>s.name.toLowerCase().includes(search.toLowerCase()));
@@ -234,9 +236,14 @@ function LoginScreen({systemConfig,onLogin}){
         <div style={{position:"absolute",inset:0,background:"linear-gradient(to bottom,rgba(9,9,11,0.1) 0%,rgba(9,9,11,0.85) 100%)"}}/>
         {/* logo + title on top of image */}
         <div style={{position:"absolute",bottom:"20px",left:0,right:0,textAlign:"center"}}>
-          <div style={{width:"48px",height:"48px",borderRadius:"13px",background:"linear-gradient(135deg,#0ea5e9,#7c3aed)",display:"flex",alignItems:"center",justifyContent:"center",fontSize:"1.3rem",fontWeight:800,margin:"0 auto 8px",boxShadow:"0 4px 20px rgba(14,165,233,0.4)"}}>G</div>
-          <div style={{fontSize:"1.4rem",fontWeight:800,color:"white",letterSpacing:"-0.5px"}}>GymTrack</div>
-          <div style={{fontSize:"0.72rem",color:"rgba(255,255,255,0.5)",marginTop:"3px"}}>Sistema de seguimiento de clases</div>
+          <div style={{margin:"0 auto 8px",display:"flex",flexDirection:"column",alignItems:"center"}}>
+            <div style={{padding:"6px 14px",borderRadius:"10px",background:"linear-gradient(135deg,rgba(14,165,233,0.85),rgba(124,58,237,0.85))",boxShadow:"0 4px 20px rgba(14,165,233,0.35)",backdropFilter:"blur(4px)"}}>
+              <div style={{fontSize:"1rem",fontWeight:800,color:"white",letterSpacing:"0.2px",lineHeight:1.1}}>Gymtrack</div>
+              <div style={{fontSize:"0.62rem",fontWeight:600,color:"rgba(255,255,255,0.75)",letterSpacing:"0.5px"}}>Yony Vega</div>
+            </div>
+          </div>
+          <div style={{fontSize:"1.3rem",fontWeight:800,color:"white",letterSpacing:"-0.5px"}}>by Juappnerí</div>
+          <div style={{fontSize:"0.72rem",color:"rgba(255,255,255,0.5)",marginTop:"3px"}}>Juappnerí productor de aplicaciones Web</div>
         </div>
         {/* image dots */}
         <div style={{position:"absolute",top:"12px",right:"14px",display:"flex",gap:"5px"}}>
@@ -247,14 +254,15 @@ function LoginScreen({systemConfig,onLogin}){
       </div>
 
       {/* ── Auth card ── */}
-      <div style={{flex:1,display:"flex",alignItems:"flex-start",justifyContent:"center",padding:"24px 20px 40px"}}>
+    <div style={{flex:1,display:"flex",alignItems:"flex-start",justifyContent:"center",padding:"24px 20px 80px"}}>
         <div style={{width:"100%",maxWidth:"360px"}}>
 
           {step==="role"&&(
             <div>
               <div style={{fontSize:"0.82rem",color:C.z4,textAlign:"center",marginBottom:"16px"}}>Selecciona tu perfil</div>
               <div style={{display:"flex",flexDirection:"column",gap:"9px"}}>
-                {Object.entries(ROLES).map(([key,r])=>(
+                {/* Only show Profesor and Alumno — Admin is the floating button */}
+                {[["profesor","Profesor"],["alumno","Alumno"]].map(([key])=>{const r=ROLES[key];return(
                   <button key={key} onClick={()=>selectRole(key)}
                     style={{padding:"14px 18px",borderRadius:"12px",border:`1px solid ${C.bg7}`,background:C.bg9,color:C.z2,fontSize:"0.9rem",fontWeight:600,cursor:"pointer",display:"flex",alignItems:"center",gap:"12px",transition:"border-color 0.15s"}}
                     onMouseEnter={e=>e.currentTarget.style.borderColor=r.color+"66"}
@@ -263,7 +271,7 @@ function LoginScreen({systemConfig,onLogin}){
                     {r.label}
                     <span style={{marginLeft:"auto",color:C.z6,fontSize:"0.75rem"}}>→</span>
                   </button>
-                ))}
+                );})}
               </div>
             </div>
           )}
@@ -308,6 +316,13 @@ function LoginScreen({systemConfig,onLogin}){
           )}
         </div>
       </div>
+
+      {/* ── Admin floating button — bottom right, small ── */}
+      <button onClick={goAdmin}
+        style={{position:"fixed",bottom:"18px",right:"18px",width:"44px",height:"44px",borderRadius:"10px",background:"rgba(39,39,42,0.85)",border:`1px solid ${C.bg7}`,color:C.z5,fontSize:"0.58rem",fontWeight:700,cursor:"pointer",backdropFilter:"blur(6px)",WebkitBackdropFilter:"blur(6px)",display:"flex",alignItems:"center",justifyContent:"center",letterSpacing:"0.3px",boxShadow:"0 2px 12px rgba(0,0,0,0.4)",lineHeight:1.2,textAlign:"center"}}
+        title="Acceso Administrador">
+        Admin
+      </button>
     </div>
   );
 }
