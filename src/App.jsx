@@ -276,12 +276,162 @@ function AdminPanel({systemConfig, role, onSave, onClose}){
   const[students,setStudents]=useState(systemConfig.students||[]);
   const[pins,setPins]=useState(systemConfig.pins||DEFAULT_SYSTEM.pins);
   const[teacherName,setTeacherName]=useState(systemConfig.teacherName||"");
+
   const[newName,setNewName]=useState("");
   const[newPin,setNewPin]=useState("");
-  const[newConfig,setNewConfig]=useState({...DEFAULT_CONFIG});
+
+  const[newConfig,setNewConfig]=useState(()=>{
+    const base={...DEFAULT_CONFIG};
+    base.dayTimeOptions=buildDefaultDayTimeOptions(base.weekDays);
+    return base;
+  });
+
+  const[editingTimesFor,setEditingTimesFor]=useState(null);
   const[saved,setSaved]=useState(false);
+
   const DAY_OPT=[{v:2,l:"Mar"},{v:4,l:"Jue"},{v:6,l:"Sáb"},{v:1,l:"Lun"},{v:3,l:"Mié"},{v:5,l:"Vie"},{v:0,l:"Dom"}];
-  const inp={width:"100%",background:C.bg,border:`1px solid ${C.bg7}`,borderRadius:"8px",padding:"7px 10px",color:C.z2,fontSize:"0.875rem",outline:"none",boxSizing:"border-box"};
+
+  const inp={width:"100%",background:C.bg,border:`1px solid ${C.bg7}`,borderRadius:"8px",padding:"7px 10px",color:C.z2,fontSize:"0.875rem",outline:"none"};
+
+  function toggleDay(d){
+    const days=newConfig.weekDays.includes(d)
+      ? newConfig.weekDays.filter(x=>x!==d)
+      : [...newConfig.weekDays,d].sort();
+
+    const dto={...newConfig.dayTimeOptions};
+
+    if(!days.includes(d)) delete dto[d];
+    else if(!dto[d]) dto[d]=d===6?["07:00","08:00","09:00"]:["05:00","06:00","07:00"];
+
+    setNewConfig({...newConfig,weekDays:days,dayTimeOptions:dto});
+
+    if(editingTimesFor===d) setEditingTimesFor(null);
+  }
+
+  function updateDayTime(d,idx,val){
+    const dto={...newConfig.dayTimeOptions,[d]:[...newConfig.dayTimeOptions[d]]};
+    dto[d][idx]=val;
+    setNewConfig({...newConfig,dayTimeOptions:dto});
+  }
+
+  function addStudent(){
+    if(!newName.trim()||newPin.length!==4)return;
+
+    const id=slugify(newName)+"-"+Date.now().toString(36);
+
+    setStudents([
+      ...students,
+      {
+        id,
+        name:newName.trim(),
+        pin:newPin,
+        config:{...newConfig}
+      }
+    ]);
+
+    setNewName("");
+    setNewPin("");
+
+    setNewConfig({
+      ...DEFAULT_CONFIG,
+      dayTimeOptions: buildDefaultDayTimeOptions(DEFAULT_CONFIG.weekDays)
+    });
+
+    setEditingTimesFor(null);
+  }
+
+  function handleSave(){
+    onSave({...systemConfig,students,pins,teacherName});
+    setSaved(true);
+    setTimeout(()=>{setSaved(false);onClose();},700);
+  }
+
+  return(
+    <div style={{position:"fixed",inset:0,zIndex:60,background:"rgba(0,0,0,0.85)",display:"flex",alignItems:"center",justifyContent:"center",padding:"16px"}}>
+      <div style={{background:C.bg9,border:`1px solid ${C.bg7}`,borderRadius:"16px",width:"100%",maxWidth:"460px",maxHeight:"85vh",display:"flex",flexDirection:"column",overflow:"hidden"}}>
+
+        <div style={{padding:"16px",borderBottom:`1px solid ${C.bg7}`,display:"flex",justifyContent:"space-between"}}>
+          <div>⚙️ Panel</div>
+          <button onClick={onClose}>✕</button>
+        </div>
+
+        <div style={{flex:1,overflowY:"auto",padding:"16px"}}>
+
+          <div style={{marginBottom:"12px"}}>+ Nuevo alumno</div>
+
+          <input value={newName} onChange={e=>setNewName(e.target.value)} placeholder="Nombre" style={inp}/>
+          <input value={newPin} onChange={e=>setNewPin(e.target.value)} placeholder="PIN (4 dígitos)" style={{...inp,marginTop:"6px"}}/>
+
+          <div style={{marginTop:"10px"}}>
+            <div>Días</div>
+
+            <div style={{display:"flex",flexWrap:"wrap",gap:"5px"}}>
+              {DAY_OPT.map(d=>{
+                const active=newConfig.weekDays.includes(d.v);
+                const editing=editingTimesFor===d.v;
+
+                return(
+                  <div key={d.v} style={{display:"flex",border:`1px solid ${active?C.sky6:C.bg7}`,borderRadius:"8px"}}>
+                    
+                    <button
+                      onClick={()=>toggleDay(d.v)}
+                      style={{
+                        padding:"4px 8px",
+                        background:active?C.sky6:"transparent",
+                        color:"white"
+                      }}
+                    >
+                      {d.l}
+                    </button>
+
+                    {active&&(
+                      <button
+                        onClick={()=>setEditingTimesFor(editing?null:d.v)}
+                        style={{padding:"4px 6px"}}
+                      >
+                        🕐
+                      </button>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+
+          {editingTimesFor!==null && newConfig.dayTimeOptions[editingTimesFor] && (
+            <div style={{marginTop:"10px",padding:"10px",background:C.bg8,borderRadius:"8px"}}>
+              <div style={{marginBottom:"6px"}}>
+                Horarios {DAY_NAMES_SHORT[editingTimesFor]}
+              </div>
+
+              {newConfig.dayTimeOptions[editingTimesFor].map((t,i)=>(
+                <input
+                  key={i}
+                  type="time"
+                  value={t}
+                  onChange={e=>updateDayTime(editingTimesFor,i,e.target.value)}
+                  style={{...inp,marginBottom:"4px"}}
+                />
+              ))}
+            </div>
+          )}
+
+          <button onClick={addStudent} style={{marginTop:"10px"}}>
+            Agregar alumno
+          </button>
+
+        </div>
+
+        <div style={{padding:"12px",borderTop:`1px solid ${C.bg7}`}}>
+          <button onClick={handleSave}>
+            Guardar
+          </button>
+        </div>
+
+      </div>
+    </div>
+  );
+};
 
   function addStudent(){
     if(!newName.trim()||newPin.length!==4)return;
