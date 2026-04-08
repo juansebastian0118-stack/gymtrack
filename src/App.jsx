@@ -792,11 +792,21 @@ export default function App(){
   },[]);
 
   useEffect(()=>{
-    const unsub=onSnapshot(SYSTEM_REF(),snap=>{
-      if(snap.exists()){const d=snap.data();setSystemConfig(d.payload||d||DEFAULT_SYSTEM);}
-    },()=>{});
-    return()=>unsub();
-  },[]);
+  const unsub=onSnapshot(SYSTEM_REF(),snap=>{
+    if(snap.exists()){
+      const d=snap.data();
+      // Soporta payload.students, students directo, o array en raíz
+      const payload=d.payload||d;
+      // Si students es un objeto con keys numéricas (array guardado como map)
+      let students=payload.students;
+      if(students&&!Array.isArray(students)){
+        students=Object.values(students);
+      }
+      setSystemConfig({...payload, students: students||[]});
+    }
+  },()=>{});
+  return()=>unsub();
+},[]);
 
   async function handleLogout(){
     if(currentUser)await writeAudit(currentUser,"logout","");
