@@ -852,9 +852,10 @@ function AppMain({currentUser,systemConfig,onSystemSave,onLogout}){
   },[role,selectedStudentId,currentUser.uid,systemConfig?.teacherName]);
 
   useEffect(()=>{
-    if(canManage(role)&&!selectedStudentId&&systemConfig?.students?.length>0)
-      setSelectedStudentId(systemConfig.students[0].id);
-  },[role,systemConfig?.students?.length]);
+  if(canManage(role)&&!selectedStudentId&&systemConfig?.students?.length>0){
+    setSelectedStudentId(systemConfig.students[0].id);
+  }
+},[role, systemConfig?.students?.length, systemConfig?.students?.[0]?.id]);
 
   const currentStudentId=role==="alumno"?currentUser.uid:selectedStudentId;
   const currentStudentObj=systemConfig.students?.find(s=>s.id===currentStudentId);
