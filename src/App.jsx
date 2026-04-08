@@ -787,7 +787,10 @@ export default function App(){
   // Listen to system config
   useEffect(()=>{
     const unsub=onSnapshot(SYSTEM_REF(),snap=>{
-      if(snap.exists())setSystemConfig(snap.data().payload||DEFAULT_SYSTEM);
+      if(snap.exists()){
+  const d=snap.data();
+  setSystemConfig(d.payload||d||DEFAULT_SYSTEM);
+}
     },()=>{});
     return()=>unsub();
   },[]);
