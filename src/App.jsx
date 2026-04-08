@@ -802,7 +802,8 @@ export default function App(){
       if(students&&!Array.isArray(students)){
         students=Object.values(students);
       }
-      setSystemConfig({...payload, students: students||[]});
+      console.log("systemConfig students:", students);
+setSystemConfig({...payload, students: students||[]});
     }
   },()=>{});
   return()=>unsub();
