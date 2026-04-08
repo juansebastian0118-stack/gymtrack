@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from "react";
 import { db } from "./firebase.js";
-import { doc, onSnapshot, setDoc, collection, addDoc } from "firebase/firestore";
+import { doc, onSnapshot, setDoc, collection, addDoc, getDoc } from "firebase/firestore";
 import {
   getAuth, signInWithEmailAndPassword, signOut,
   onAuthStateChanged, sendPasswordResetEmail
@@ -84,49 +84,53 @@ function cleanData(obj){
   if(obj&&typeof obj==="object"){const r={};Object.entries(obj).forEach(([k,v])=>{if(v!==undefined)r[k]=cleanData(v);});return r;}
   return obj;
 }
-
-// ─── AUDIT LOG ────────────────────────────────────────────────────────────
-async function writeAudit(user, action, detail=""){
-  try{
-    await addDoc(AUDIT_COL(),{
-      uid:    user.uid,
-      email:  user.email,
-      role:   user.role,
-      action,
-      detail,
-      at:     new Date().toISOString(),
-    });
-  }catch(e){console.error("Audit error:",e);}
+async function writeAudit(user,action,detail=""){
+  try{await addDoc(AUDIT_COL(),{uid:user.uid,email:user.email,role:user.role,action,detail,at:new Date().toISOString()});}
+  catch(e){console.error("Audit error:",e);}
+}
+async function saveStudentData(uid,data,user){
+  try{await setDoc(STUDENT_REF(uid),{payload:cleanData(data),updatedAt:new Date().toISOString(),updatedBy:{uid:user.uid,email:user.email,role:user.role}});}
+  catch(e){console.error("Save error:",e);}
+}
+async function saveSystemConfig(cfg,user){
+  try{await setDoc(SYSTEM_REF(),{payload:cleanData(cfg),updatedAt:new Date().toISOString(),updatedBy:{uid:user.uid,email:user.email,role:user.role}});}
+  catch(e){console.error("System save error:",e);}
 }
 
-async function saveStudentData(uid, data, user){
-  try{
-    await setDoc(STUDENT_REF(uid),{
-      payload:   cleanData(data),
-      updatedAt: new Date().toISOString(),
-      updatedBy: { uid: user.uid, email: user.email, role: user.role },
-    });
-  }catch(e){console.error("Save error:",e);}
-}
-async function saveSystemConfig(cfg, user){
-  try{
-    await setDoc(SYSTEM_REF(),{
-      payload:   cleanData(cfg),
-      updatedAt: new Date().toISOString(),
-      updatedBy: { uid: user.uid, email: user.email, role: user.role },
-    });
-  }catch(e){console.error("System save error:",e);}
+// ─── CHANGE 3: export students CSV ────────────────────────────────────────
+async function exportStudentsCSV(systemConfig) {
+  const rows = [["Nombre","Teléfono","Email","Clases último ciclo"]];
+  for (const s of systemConfig.students||[]) {
+    let lastCycleClasses = s.config?.classesPerCycle || 12;
+    // Try to get last cycle classes from student data
+    try {
+      const snap = await getDoc(STUDENT_REF(s.id));
+      if (snap.exists()) {
+        const payload = snap.data().payload || snap.data();
+        const cycles = payload.cycles || [];
+        if (cycles.length > 0) {
+          lastCycleClasses = cycles[cycles.length-1].config?.classesPerCycle || lastCycleClasses;
+        }
+      }
+    } catch {}
+    rows.push([s.name||"", s.phone||"", s.email||"", lastCycleClasses]);
+  }
+  const csv = rows.map(r=>r.map(v=>`"${String(v)}"`).join(",")).join("\n");
+  const blob = new Blob(["\uFEFF"+csv],{type:"text/csv;charset=utf-8;"});
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href=url; a.download="alumnos_gymtrack.csv"; a.click();
+  URL.revokeObjectURL(url);
 }
 
 // ─── ROLES ────────────────────────────────────────────────────────────────
 const ROLES={
-  admin:   {label:"Administrador", color:"#7c3aed"},
+  admin:   {label:"Administrador",color:"#7c3aed"},
   profesor:{label:"Profesor",      color:"#0284c7"},
   alumno:  {label:"Alumno",        color:"#10b981"},
 };
 const DEFAULT_CONFIG={classesPerCycle:12,weekDays:[2,4,6],amount:660000};
 const DEFAULT_SYSTEM={teacherName:"Yony Vega",students:[]};
-
 function canManage(role){return role==="admin"||role==="profesor";}
 
 function initStudentData(student){
@@ -146,6 +150,8 @@ const C={
   sky:"#38bdf8",skyBg:"rgba(14,165,233,0.15)",skyBd:"rgba(56,189,248,0.35)",sky6:"#0284c7",
   amb:"#fbbf24",ambBg:"rgba(251,191,36,0.12)",ambBd:"rgba(251,191,36,0.3)",
   vio:"#a78bfa",vioBg:"rgba(139,92,246,0.15)",vioBd:"rgba(139,92,246,0.3)",
+  // CHANGE 4: gray tone for logo
+  logoGray:"rgba(120,120,130,0.75)",
 };
 
 function Badge({label,color}){
@@ -202,6 +208,17 @@ function DayTimeEditor({config,setConfig}){
   );
 }
 
+// ─── CHANGE 4: Logo component (gray + 💪) ─────────────────────────────────
+function GymLogo({size="md"}){
+  const big = size==="lg";
+  return(
+    <div style={{display:"inline-flex",flexDirection:"column",alignItems:"center",padding:big?"7px 16px":"4px 8px",borderRadius:big?"12px":"8px",background:"rgba(100,100,110,0.18)",border:"1px solid rgba(120,120,130,0.35)",backdropFilter:"blur(4px)"}}>
+      <div style={{fontSize:big?"1.1rem":"0.65rem",fontWeight:800,color:"#b0b0be",letterSpacing:"0.3px",lineHeight:1}}>💪 Gymtrack</div>
+      <div style={{fontSize:big?"0.65rem":"0.45rem",fontWeight:600,color:"rgba(160,160,175,0.75)",letterSpacing:"0.5px",lineHeight:1,marginTop:"2px"}}>Yony Vega</div>
+    </div>
+  );
+}
+
 // ─── GYM IMAGES ───────────────────────────────────────────────────────────
 const GYM_IMAGES=[
   "https://images.unsplash.com/photo-1534438327276-14e5300c3a48?w=900&q=80",
@@ -218,41 +235,32 @@ function LoginScreen({onLogin}){
   const[loading,setLoading]=useState(false);
   const[resetSent,setResetSent]=useState(false);
   const[imgIdx,setImgIdx]=useState(0);
-
   useEffect(()=>{const t=setInterval(()=>setImgIdx(i=>(i+1)%GYM_IMAGES.length),4000);return()=>clearInterval(t);},[]);
 
   async function handleLogin(e){
-    e.preventDefault();
-    setError("");setLoading(true);
+    e.preventDefault();setError("");setLoading(true);
     try{
-      const cred = await signInWithEmailAndPassword(auth, email.trim(), password);
-      // Get custom claims from token
-      const token = await cred.user.getIdTokenResult();
-      const role = token.claims.role;
+      const cred=await signInWithEmailAndPassword(auth,email.trim(),password);
+      const token=await cred.user.getIdTokenResult();
+      const role=token.claims.role;
       if(!role){setError("Tu cuenta no tiene un rol asignado. Contacta al administrador.");setLoading(false);return;}
-      onLogin({ uid: cred.user.uid, email: cred.user.email, role });
+      onLogin({uid:cred.user.uid,email:cred.user.email,role});
     }catch(err){
-      if(err.code==="auth/invalid-credential"||err.code==="auth/wrong-password"||err.code==="auth/user-not-found")
-        setError("Email o contraseña incorrectos.");
-      else if(err.code==="auth/too-many-requests")
-        setError("Demasiados intentos. Espera unos minutos.");
+      if(err.code==="auth/invalid-credential"||err.code==="auth/wrong-password"||err.code==="auth/user-not-found")setError("Email o contraseña incorrectos.");
+      else if(err.code==="auth/too-many-requests")setError("Demasiados intentos. Espera unos minutos.");
       else setError("Error al iniciar sesión. Intenta de nuevo.");
       setLoading(false);
     }
   }
-
   async function handleReset(){
     if(!email.trim()){setError("Ingresa tu email primero.");return;}
     try{await sendPasswordResetEmail(auth,email.trim());setResetSent(true);setError("");}
     catch{setError("No se pudo enviar el correo. Verifica el email.");}
   }
-
   const inp={width:"100%",background:C.bg8,border:`1px solid ${C.bg7}`,borderRadius:"10px",padding:"11px 14px",color:C.z1,fontSize:"0.9rem",outline:"none",boxSizing:"border-box",marginBottom:"10px"};
-
   return(
     <div style={{minHeight:"100vh",background:C.bg,fontFamily:"'DM Sans',system-ui,sans-serif",display:"flex",flexDirection:"column"}}>
-      <style>{`@import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;600;700;800&display=swap');*{box-sizing:border-box;-webkit-tap-highlight-color:transparent;}body{margin:0;padding:0;background:#09090b;}input,button{font-family:inherit;-webkit-appearance:none;appearance:none;}input[type=password]{letter-spacing:0.15em;}`}</style>
-
+      <style>{`@import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;600;700;800&display=swap');*{box-sizing:border-box;-webkit-tap-highlight-color:transparent;}body{margin:0;padding:0;background:#09090b;}input,button{font-family:inherit;-webkit-appearance:none;appearance:none;}`}</style>
       {/* Hero */}
       <div style={{position:"relative",height:"240px",overflow:"hidden",flexShrink:0}}>
         {GYM_IMAGES.map((src,i)=>(
@@ -260,18 +268,15 @@ function LoginScreen({onLogin}){
         ))}
         <div style={{position:"absolute",inset:0,background:"linear-gradient(to bottom,rgba(9,9,11,0.1) 0%,rgba(9,9,11,0.85) 100%)"}}/>
         <div style={{position:"absolute",bottom:"20px",left:0,right:0,textAlign:"center"}}>
-          <div style={{margin:"0 auto 8px",display:"inline-block",padding:"6px 14px",borderRadius:"10px",background:"linear-gradient(135deg,rgba(14,165,233,0.85),rgba(124,58,237,0.85))",boxShadow:"0 4px 20px rgba(14,165,233,0.35)"}}>
-            <div style={{fontSize:"1rem",fontWeight:800,color:"white"}}>Gymtrack</div>
-            <div style={{fontSize:"0.62rem",fontWeight:600,color:"rgba(255,255,255,0.75)"}}>Yony Vega</div>
-          </div>
-          <div style={{fontSize:"1.3rem",fontWeight:800,color:"white",marginTop:"6px"}}>by Juappnerí</div>
+          {/* CHANGE 4: gray logo with 💪 */}
+          <div style={{marginBottom:"8px"}}><GymLogo size="lg"/></div>
+          <div style={{fontSize:"1.3rem",fontWeight:800,color:"white"}}>by Juappnerí</div>
           <div style={{fontSize:"0.72rem",color:"rgba(255,255,255,0.5)",marginTop:"3px"}}>Juappnerí productor de aplicaciones Web</div>
         </div>
         <div style={{position:"absolute",top:"12px",right:"14px",display:"flex",gap:"5px"}}>
           {GYM_IMAGES.map((_,i)=><div key={i} onClick={()=>setImgIdx(i)} style={{width:"6px",height:"6px",borderRadius:"50%",background:i===imgIdx?"white":"rgba(255,255,255,0.3)",cursor:"pointer",transition:"background 0.3s"}}/>)}
         </div>
       </div>
-
       {/* Form */}
       <div style={{flex:1,display:"flex",alignItems:"flex-start",justifyContent:"center",padding:"28px 20px 60px"}}>
         <div style={{width:"100%",maxWidth:"360px"}}>
@@ -288,12 +293,10 @@ function LoginScreen({onLogin}){
               <input type="email" value={email} onChange={e=>setEmail(e.target.value)} placeholder="Correo electrónico" required style={inp} autoComplete="email"/>
               <input type="password" value={password} onChange={e=>setPassword(e.target.value)} placeholder="Contraseña" required style={{...inp,marginBottom:"6px"}} autoComplete="current-password"/>
               {error&&<div style={{fontSize:"0.72rem",color:"#fb7185",marginBottom:"10px",textAlign:"center"}}>{error}</div>}
-              <button type="submit" disabled={loading}
-                style={{width:"100%",background:loading?"rgba(2,132,199,0.5)":C.sky6,border:"none",color:"white",padding:"12px",borderRadius:"10px",fontSize:"0.95rem",cursor:loading?"not-allowed":"pointer",fontWeight:700,marginBottom:"12px"}}>
+              <button type="submit" disabled={loading} style={{width:"100%",background:loading?"rgba(2,132,199,0.5)":C.sky6,border:"none",color:"white",padding:"12px",borderRadius:"10px",fontSize:"0.95rem",cursor:loading?"not-allowed":"pointer",fontWeight:700,marginBottom:"12px"}}>
                 {loading?"Iniciando sesión...":"Iniciar sesión"}
               </button>
-              <button type="button" onClick={handleReset}
-                style={{width:"100%",background:"none",border:"none",color:C.z5,fontSize:"0.75rem",cursor:"pointer",textDecoration:"underline"}}>
+              <button type="button" onClick={handleReset} style={{width:"100%",background:"none",border:"none",color:C.z5,fontSize:"0.75rem",cursor:"pointer",textDecoration:"underline"}}>
                 ¿Olvidaste tu contraseña?
               </button>
             </form>
@@ -334,6 +337,8 @@ function StudentSelector({students,selectedId,onSelect}){
 }
 
 // ─── ADMIN PANEL ──────────────────────────────────────────────────────────
+// CHANGE 1: profesor cannot delete students
+// CHANGE 2: phone field added
 function AdminPanel({systemConfig,currentUser,onSave,onClose}){
   const role=currentUser.role;
   const[tab,setTab]=useState("students");
@@ -341,6 +346,7 @@ function AdminPanel({systemConfig,currentUser,onSave,onClose}){
   const[teacherName,setTeacherName]=useState(systemConfig.teacherName||"");
   const[newName,setNewName]=useState("");
   const[newEmail,setNewEmail]=useState("");
+  const[newPhone,setNewPhone]=useState(""); // CHANGE 2
   const[newConfig,setNewConfig]=useState(()=>{const base={...DEFAULT_CONFIG};base.dayTimeOptions=buildDefaultDayTimeOptions(base.weekDays);return base;});
   const[saved,setSaved]=useState(false);
   const[pwEmail,setPwEmail]=useState("");
@@ -349,25 +355,26 @@ function AdminPanel({systemConfig,currentUser,onSave,onClose}){
 
   function addStudent(){
     if(!newName.trim()||!newEmail.trim())return;
-    // NOTE: creating Auth users requires Admin SDK (backend).
-    // Here we only add to the students list in Firestore config.
-    // The Admin must create the Auth user manually in Firebase Console.
     const id=slugify(newName)+"-"+Date.now().toString(36);
-    setStudents([...students,{id,name:newName.trim(),email:newEmail.trim(),config:{...newConfig}}]);
-    setNewName("");setNewEmail("");const base={...DEFAULT_CONFIG};base.dayTimeOptions=buildDefaultDayTimeOptions(base.weekDays);setNewConfig(base);
+    setStudents([...students,{id,name:newName.trim(),email:newEmail.trim(),phone:newPhone.trim(),config:{...newConfig}}]);
+    setNewName("");setNewEmail("");setNewPhone("");
+    const base={...DEFAULT_CONFIG};base.dayTimeOptions=buildDefaultDayTimeOptions(base.weekDays);setNewConfig(base);
   }
-  function removeStudent(id){setStudents(students.filter(s=>s.id!==id));}
+  // CHANGE 1: only admin can delete
+  function removeStudent(id){
+    if(role!=="admin")return;
+    setStudents(students.filter(s=>s.id!==id));
+  }
 
   async function handleSave(){
     await onSave({...systemConfig,students,teacherName});
-    await writeAudit(currentUser,"admin_panel_save",`students:${students.length}, teacherName:${teacherName}`);
+    await writeAudit(currentUser,"admin_panel_save",`students:${students.length}`);
     setSaved(true);setTimeout(()=>{setSaved(false);onClose();},700);
   }
-
   async function handleSendReset(){
     if(!pwEmail.trim())return;
     try{await sendPasswordResetEmail(auth,pwEmail.trim());setPwSent(true);}
-    catch{alert("No se pudo enviar el correo. Verifica el email.");}
+    catch{alert("No se pudo enviar el correo.");}
   }
 
   return(
@@ -382,7 +389,6 @@ function AdminPanel({systemConfig,currentUser,onSave,onClose}){
             <button key={t.id} onClick={()=>setTab(t.id)} style={{padding:"6px 12px",borderRadius:"8px 8px 0 0",border:"none",background:tab===t.id?C.bg8:"transparent",color:tab===t.id?C.z1:C.z5,fontSize:"0.78rem",fontWeight:600,cursor:"pointer"}}>{t.l}</button>
           ))}
         </div>
-
         <div style={{flex:1,overflowY:"auto",padding:"16px 18px"}}>
 
           {tab==="students"&&(
@@ -393,10 +399,14 @@ function AdminPanel({systemConfig,currentUser,onSave,onClose}){
                   <div key={s.id} style={{background:C.bg8,borderRadius:"9px",padding:"10px 12px",display:"flex",alignItems:"center",gap:"10px"}}>
                     <div style={{flex:1,minWidth:0}}>
                       <div style={{fontSize:"0.82rem",fontWeight:600,color:C.z2,marginBottom:"1px"}}>{s.name}</div>
-                      <div style={{fontSize:"0.62rem",color:C.z5}}>{s.email||"sin email"}</div>
+                      {/* CHANGE 2: show phone */}
+                      <div style={{fontSize:"0.62rem",color:C.z5}}>{s.phone||"sin teléfono"} · {s.email||"sin email"}</div>
                       <div style={{fontSize:"0.62rem",color:C.z6}}>{s.config?.classesPerCycle||12} clases · ${(s.config?.amount||660000).toLocaleString("es-CO")} COP</div>
                     </div>
-                    <button onClick={()=>removeStudent(s.id)} style={{background:C.roseBg,border:`1px solid ${C.roseBd}`,color:"#fb7185",borderRadius:"6px",padding:"3px 8px",fontSize:"0.7rem",cursor:"pointer"}}>✕</button>
+                    {/* CHANGE 1: only admin sees delete button */}
+                    {role==="admin"&&(
+                      <button onClick={()=>removeStudent(s.id)} style={{background:C.roseBg,border:`1px solid ${C.roseBd}`,color:"#fb7185",borderRadius:"6px",padding:"3px 8px",fontSize:"0.7rem",cursor:"pointer"}}>✕</button>
+                    )}
                   </div>
                 ))}
               </div>
@@ -408,9 +418,11 @@ function AdminPanel({systemConfig,currentUser,onSave,onClose}){
                     <div style={{fontSize:"0.62rem",color:C.z5}}>El usuario Auth debe crearse en Firebase Console</div>
                   </div>
                 </div>
-                <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:"7px",marginBottom:"8px"}}>
-                  <input value={newName} onChange={e=>setNewName(e.target.value)} placeholder="Nombre completo" style={inp}/>
+                {/* CHANGE 2: 3-column grid with phone */}
+                <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:"7px",marginBottom:"8px"}}>
+                  <input value={newName} onChange={e=>setNewName(e.target.value)} placeholder="Nombre completo" style={{...inp,gridColumn:"1/-1"}}/>
                   <input type="email" value={newEmail} onChange={e=>setNewEmail(e.target.value)} placeholder="Email" style={inp}/>
+                  <input type="tel" value={newPhone} onChange={e=>setNewPhone(e.target.value)} placeholder="📱 Teléfono" style={inp}/>
                 </div>
                 <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:"7px",marginBottom:"10px"}}>
                   <div><label style={{fontSize:"0.65rem",color:C.z5,display:"block",marginBottom:"3px"}}>Clases por ciclo</label><input type="number" min="1" max="30" value={newConfig.classesPerCycle} onChange={e=>setNewConfig({...newConfig,classesPerCycle:+e.target.value})} style={inp}/></div>
@@ -427,9 +439,7 @@ function AdminPanel({systemConfig,currentUser,onSave,onClose}){
 
           {tab==="password"&&(
             <div>
-              <div style={{fontSize:"0.75rem",color:C.z4,marginBottom:"14px"}}>
-                Envía un correo de restablecimiento de contraseña a cualquier usuario.
-              </div>
+              <div style={{fontSize:"0.75rem",color:C.z4,marginBottom:"14px"}}>Envía un correo de restablecimiento de contraseña.</div>
               {pwSent?(
                 <div style={{background:C.emBg,border:`1px solid ${C.emBd}`,borderRadius:"10px",padding:"14px",textAlign:"center"}}>
                   <div style={{fontSize:"1.2rem",marginBottom:"6px"}}>📧</div>
@@ -443,7 +453,7 @@ function AdminPanel({systemConfig,currentUser,onSave,onClose}){
                   <input type="email" value={pwEmail} onChange={e=>setPwEmail(e.target.value)} placeholder="usuario@email.com"
                     style={{...inp,width:"100%",marginBottom:"10px"}}/>
                   <div style={{display:"flex",flexDirection:"column",gap:"5px",marginBottom:"12px"}}>
-                    {[{email:"juansebastian0118@gmail.com",label:"Admin"},{email:"yony@gym.com",label:"Profesor"},{email:"juansebastian@gym.com",label:"Alumno — Juan Sebastian"},...students.map(s=>({email:s.email,label:`Alumno — ${s.name}`}))].filter((v,i,a)=>v.email&&a.findIndex(x=>x.email===v.email)===i).map(u=>(
+                    {[...students.map(s=>({email:s.email,label:`Alumno — ${s.name}`}))].filter(v=>v.email).map(u=>(
                       <button key={u.email} onClick={()=>setPwEmail(u.email)}
                         style={{padding:"6px 10px",borderRadius:"8px",border:`1px solid ${pwEmail===u.email?C.skyBd:C.bg7}`,background:pwEmail===u.email?C.skyBg:C.bg8,color:pwEmail===u.email?C.sky:C.z4,fontSize:"0.72rem",cursor:"pointer",textAlign:"left"}}>
                         {u.label} — {u.email}
@@ -471,7 +481,6 @@ function AdminPanel({systemConfig,currentUser,onSave,onClose}){
             </div>
           )}
         </div>
-
         <div style={{padding:"12px 18px",borderTop:`1px solid ${C.bg7}`,display:"flex",gap:"8px"}}>
           <button onClick={handleSave} style={{flex:1,background:saved?"rgba(5,150,105,0.7)":C.sky6,border:"none",color:"white",padding:"8px",borderRadius:"10px",fontSize:"0.875rem",cursor:"pointer",fontWeight:700}}>
             {saved?"✓ Guardado":"Guardar cambios"}
@@ -644,6 +653,7 @@ function NewCycleCard({studentConfig,onAdd}){
 
 const DAY_OPT=[{v:1,l:"Lun"},{v:2,l:"Mar"},{v:3,l:"Mié"},{v:4,l:"Jue"},{v:5,l:"Vie"},{v:6,l:"Sáb"},{v:0,l:"Dom"}];
 
+// CHANGE 5: isCurrent controls showAll default → always start collapsed (false)
 function CycleCard({cycle,cycleIndex,isCurrent,role,onUpdateCycle,onUpdateClass,onUpdateClassRecalc,onCancelClass,onRescheduleClass,onResetCycle,onDeleteCycle}){
   const target=cycle.config.classesPerCycle;
   const done=doneCount(cycle.classes),cancelled=cancelledCount(cycle.classes),reschd=rescheduledCount(cycle.classes);
@@ -654,7 +664,7 @@ function CycleCard({cycle,cycleIndex,isCurrent,role,onUpdateCycle,onUpdateClass,
   const canEditConfig=canManage(role)||(role==="alumno"&&!hasRegistered);
   const[editingConfig,setEditingConfig]=useState(false);
   const[localConfig,setLocalConfig]=useState({...cycle.config});
-  const[showAll,setShowAll]=useState(isCurrent);
+  const[showAll,setShowAll]=useState(false); // CHANGE 5: always start collapsed
   const[confirmReset,setConfirmReset]=useState(false);
   const[confirmDelete,setConfirmDelete]=useState(false);
   function saveConfig(){onUpdateCycle({...cycle,config:{...localConfig}});setEditingConfig(false);}
@@ -764,51 +774,39 @@ function CycleCard({cycle,cycleIndex,isCurrent,role,onUpdateCycle,onUpdateClass,
 
 // ─── MAIN APP ─────────────────────────────────────────────────────────────
 export default function App(){
-  const[currentUser,setCurrentUser]=useState(null); // {uid, email, role}
+  const[currentUser,setCurrentUser]=useState(null);
   const[authLoading,setAuthLoading]=useState(true);
   const[systemConfig,setSystemConfig]=useState(DEFAULT_SYSTEM);
 
-  // Listen to Firebase Auth state
   useEffect(()=>{
     const unsub=onAuthStateChanged(auth,async firebaseUser=>{
       if(firebaseUser){
         const token=await firebaseUser.getIdTokenResult();
         const role=token.claims.role;
-        if(role) setCurrentUser({uid:firebaseUser.uid,email:firebaseUser.email,role});
+        if(role)setCurrentUser({uid:firebaseUser.uid,email:firebaseUser.email,role});
         else setCurrentUser(null);
-      } else {
-        setCurrentUser(null);
-      }
+      }else{setCurrentUser(null);}
       setAuthLoading(false);
     });
     return()=>unsub();
   },[]);
 
-  // Listen to system config
   useEffect(()=>{
     const unsub=onSnapshot(SYSTEM_REF(),snap=>{
-      if(snap.exists()){
-  const d=snap.data();
-  setSystemConfig(d.payload||d||DEFAULT_SYSTEM);
-}
+      if(snap.exists()){const d=snap.data();setSystemConfig(d.payload||d||DEFAULT_SYSTEM);}
     },()=>{});
     return()=>unsub();
   },[]);
 
   async function handleLogout(){
-    if(currentUser) await writeAudit(currentUser,"logout","");
-    await signOut(auth);
-    setCurrentUser(null);
+    if(currentUser)await writeAudit(currentUser,"logout","");
+    await signOut(auth);setCurrentUser(null);
   }
 
-  if(authLoading) return(
-    <div style={{minHeight:"100vh",background:"#09090b",display:"flex",alignItems:"center",justifyContent:"center",color:"#71717a",fontFamily:"system-ui"}}>
-      Cargando...
-    </div>
+  if(authLoading)return(
+    <div style={{minHeight:"100vh",background:"#09090b",display:"flex",alignItems:"center",justifyContent:"center",color:"#71717a",fontFamily:"system-ui"}}>Cargando...</div>
   );
-
-  if(!currentUser) return<LoginScreen onLogin={setCurrentUser}/>;
-
+  if(!currentUser)return<LoginScreen onLogin={setCurrentUser}/>;
   return<AppMain currentUser={currentUser} systemConfig={systemConfig}
     onSystemSave={async cfg=>{setSystemConfig(cfg);await saveSystemConfig(cfg,currentUser);await writeAudit(currentUser,"system_config_saved","");}}
     onLogout={handleLogout}/>;
@@ -823,31 +821,24 @@ function AppMain({currentUser,systemConfig,onSystemSave,onLogout}){
   const[tab,setTab]=useState("cycles");
   const[showAdmin,setShowAdmin]=useState(false);
   const unsubStudent=useRef(null);
-
   const role=currentUser.role;
 
-  // Determine which student UID to load
   useEffect(()=>{
     const studentId=role==="alumno"?currentUser.uid:selectedStudentId;
     if(!studentId){setStudentData(null);setLoading(false);return;}
     if(unsubStudent.current)unsubStudent.current();
     setLoading(true);
     const unsub=onSnapshot(STUDENT_REF(studentId),async snap=>{
-      if(snap.exists()){
-        setStudentData(sanitizeCycles(snap.data().payload));
-        setLastSaved(snap.data().updatedAt);
-      } else if(canManage(role)){
-        // For admin/profesor viewing a student with no data yet
+      if(snap.exists()){setStudentData(sanitizeCycles(snap.data().payload||snap.data()));setLastSaved(snap.data().updatedAt);}
+      else if(canManage(role)){
         const student=systemConfig.students?.find(s=>s.id===studentId);
         const init=initStudentData(student||{name:studentId,config:DEFAULT_CONFIG});
         init.teacherName=systemConfig.teacherName||"";
-        setStudentData(init);
-        await saveStudentData(studentId,init,currentUser);
+        setStudentData(init);await saveStudentData(studentId,init,currentUser);
       }
       setLoading(false);
     },err=>{console.error("Student data error:",err);setLoading(false);});
-    unsubStudent.current=unsub;
-    return()=>unsub();
+    unsubStudent.current=unsub;return()=>unsub();
   },[role,selectedStudentId,currentUser.uid,systemConfig?.teacherName]);
 
   useEffect(()=>{
@@ -906,7 +897,7 @@ function AppMain({currentUser,systemConfig,onSystemSave,onLogout}){
   }
   function exportCSV(){
     if(!studentData)return;
-    const rows=[["Ciclo","Estudiante","Profesor","#","Fecha","Hora","Estado","Modalidad","Notas","Pago","Monto","Editado por","Fecha edición"]];
+    const rows=[["Ciclo","Estudiante","Profesor","#","Fecha","Hora","Estado","Modalidad","Notas","Pago","Monto"]];
     studentData.cycles.forEach((cy,ci)=>{const seqs=buildSeqNums(cy.classes,cy.config.classesPerCycle);cy.classes.forEach((c,i)=>rows.push([ci+1,studentData.studentName,studentData.teacherName,seqs[i]??"↺",c.date,c.time,c.status,c.type,c.notes||"",cy.paid?"Pagado":"Pendiente",cy.amount]));});
     const csv=rows.map(r=>r.map(v=>`"${String(v)}"`).join(",")).join("\n");
     const blob=new Blob(["\uFEFF"+csv],{type:"text/csv;charset=utf-8;"});
@@ -933,10 +924,8 @@ function AppMain({currentUser,systemConfig,onSystemSave,onLogout}){
       <div style={{position:"sticky",top:0,zIndex:40,background:"rgba(9,9,11,0.93)",backdropFilter:"blur(10px)",WebkitBackdropFilter:"blur(10px)",borderBottom:`1px solid ${C.bg8}`}}>
         <div style={{maxWidth:"680px",margin:"0 auto",padding:"9px 14px",display:"flex",alignItems:"center",justifyContent:"space-between",gap:"10px"}}>
           <div style={{display:"flex",alignItems:"center",gap:"9px",minWidth:0}}>
-            <div style={{padding:"4px 8px",borderRadius:"7px",background:"linear-gradient(135deg,rgba(14,165,233,0.7),rgba(124,58,237,0.7))",flexShrink:0}}>
-              <div style={{fontSize:"0.6rem",fontWeight:800,color:"white",lineHeight:1}}>Gymtrack</div>
-              <div style={{fontSize:"0.48rem",color:"rgba(255,255,255,0.7)",lineHeight:1}}>Yony Vega</div>
-            </div>
+            {/* CHANGE 4: gray logo in topbar */}
+            <GymLogo size="sm"/>
             <div style={{minWidth:0}}>
               <div style={{fontSize:"0.85rem",fontWeight:700,lineHeight:1}}>by Juappnerí</div>
               <div style={{fontSize:"0.62rem",color:C.z5,lineHeight:1,marginTop:"2px",display:"flex",alignItems:"center",gap:"5px",flexWrap:"wrap"}}>
@@ -948,7 +937,9 @@ function AppMain({currentUser,systemConfig,onSystemSave,onLogout}){
           {canManage(role)&&systemConfig.students?.length>0&&(<StudentSelector students={systemConfig.students} selectedId={selectedStudentId} onSelect={id=>{setSelectedStudentId(id);setTab("cycles");setLoading(true);}}/>)}
           <div style={{display:"flex",alignItems:"center",gap:"5px",flexShrink:0}}>
             {saving?<span style={{fontSize:"0.6rem",color:C.sky}}>💾</span>:lastSaved&&<span style={{fontSize:"0.6rem",color:C.z6}}>✓</span>}
-            {canManage(role)&&<button onClick={exportCSV} style={btnA} title="Exportar CSV">⬇️</button>}
+            {canManage(role)&&<button onClick={exportCSV} style={btnA} title="Exportar clases CSV">⬇️</button>}
+            {/* CHANGE 3: export students button for admin and profesor */}
+            {canManage(role)&&<button onClick={()=>exportStudentsCSV(systemConfig)} style={{...btnA,color:C.em2}} title="Exportar directorio alumnos">👥⬇️</button>}
             {canManage(role)&&<button onClick={()=>setShowAdmin(true)} style={btnA} title="Administración">⚙️</button>}
             <button onClick={onLogout} style={{...btnA,color:"#fb7185"}} title="Cerrar sesión">⏏️</button>
           </div>
@@ -957,7 +948,7 @@ function AppMain({currentUser,systemConfig,onSystemSave,onLogout}){
 
       <div style={{maxWidth:"680px",margin:"0 auto",padding:"18px 14px",display:"flex",flexDirection:"column",gap:"14px"}}>
         {canManage(role)&&!currentStudentId&&(<div style={{textAlign:"center",padding:"40px 20px",color:C.z5,fontSize:"0.875rem"}}>Selecciona un alumno para ver su seguimiento</div>)}
-        {isLoadingData&&currentStudentId&&(<div style={{textAlign:"center",padding:"40px",color:C.z4}}><div style={{marginBottom:"6px"}}>Cargando datos...</div></div>)}
+        {isLoadingData&&currentStudentId&&(<div style={{textAlign:"center",padding:"40px",color:C.z4}}><div>Cargando datos...</div></div>)}
         {!isLoadingData&&studentData&&(
           <>
             {canManage(role)&&(
