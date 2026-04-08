@@ -802,7 +802,7 @@ export default function App(){
       if(students&&!Array.isArray(students)){
         students=Object.values(students);
       }
-      console.log("systemConfig students:", students);
+      
 setSystemConfig({...payload, students: students||[]});
     }
   },()=>{});
