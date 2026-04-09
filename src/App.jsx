@@ -404,16 +404,18 @@ function AdminPanel({systemConfig,role,onSave,onClose}){
   const[newPin,setNewPin]=useState("");
   const[newEmail,setNewEmail]=useState("");
   const[newPhone,setNewPhone]=useState("");
-  const[newConfig,setNewConfig]=useState({...DEFAULT_CONFIG,dayTimeOptions:{}});
+  // CHANGE 1: blank classes/amount, no dayTimeOptions in admin form
+  const[newConfig,setNewConfig]=useState({classesPerCycle:"",weekDays:[],amount:"",dayTimeOptions:{}});
   const[saved,setSaved]=useState(false);
   const inp={width:"100%",background:C.bg,border:`1px solid ${C.bg7}`,borderRadius:"8px",padding:"7px 10px",color:C.z2,fontSize:"0.875rem",outline:"none",boxSizing:"border-box"};
 
   function addStudent(){
     if(!newName.trim()||newPin.length!==4)return;
     const id=slugify(newName)+"-"+Date.now().toString(36);
-    setStudents([...students,{id,name:newName.trim(),pin:newPin,email:newEmail.trim(),phone:newPhone.trim(),config:{...newConfig}}]);
+    setStudents([...students,{id,name:newName.trim(),pin:newPin,email:newEmail.trim(),phone:newPhone.trim(),
+      config:{classesPerCycle:newConfig.classesPerCycle||12,weekDays:newConfig.weekDays,amount:newConfig.amount||660000,dayTimeOptions:{}}}]);
     setNewName("");setNewPin("");setNewEmail("");setNewPhone("");
-    setNewConfig({...DEFAULT_CONFIG,dayTimeOptions:{}});
+    setNewConfig({classesPerCycle:"",weekDays:[],amount:"",dayTimeOptions:{}});
   }
   function removeStudent(id){if(role!=="admin")return;setStudents(students.filter(s=>s.id!==id));}
   function updateStudentPin(id,p){setStudents(students.map(s=>s.id===id?{...s,pin:p}:s));}
@@ -483,10 +485,23 @@ function AdminPanel({systemConfig,role,onSave,onClose}){
                   <input type="tel" value={newPhone} onChange={e=>setNewPhone(e.target.value)} placeholder="📱 Teléfono" style={inp}/>
                 </div>
                 <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:"7px",marginBottom:"10px"}}>
-                  <div><label style={{fontSize:"0.65rem",color:C.z5,display:"block",marginBottom:"3px"}}>Clases por ciclo</label><input type="number" min="1" max="30" value={newConfig.classesPerCycle} onChange={e=>setNewConfig({...newConfig,classesPerCycle:+e.target.value})} style={inp}/></div>
-                  <div><label style={{fontSize:"0.65rem",color:C.z5,display:"block",marginBottom:"3px"}}>Monto COP</label><input type="number" value={newConfig.amount} onChange={e=>setNewConfig({...newConfig,amount:+e.target.value})} style={inp}/></div>
+                  <div><label style={{fontSize:"0.65rem",color:C.z5,display:"block",marginBottom:"3px"}}>Clases por ciclo</label><input type="number" min="1" max="30" value={newConfig.classesPerCycle} onChange={e=>setNewConfig({...newConfig,classesPerCycle:e.target.value})} placeholder="ej: 12" style={inp}/></div>
+                  <div><label style={{fontSize:"0.65rem",color:C.z5,display:"block",marginBottom:"3px"}}>Monto COP</label><input type="number" value={newConfig.amount} onChange={e=>setNewConfig({...newConfig,amount:e.target.value})} placeholder="ej: 660000" style={inp}/></div>
                 </div>
-                <DayTimeEditor config={newConfig} setConfig={setNewConfig}/>
+                {/* CHANGE 1: only days, no time editor */}
+                <div style={{marginBottom:"10px"}}>
+                  <label style={{fontSize:"0.68rem",color:C.z4,display:"block",marginBottom:"6px"}}>Días de clase</label>
+                  <div style={{display:"flex",flexWrap:"wrap",gap:"5px"}}>
+                    {DAY_OPT_ORDERED.map(d=>{const active=newConfig.weekDays.includes(d.v);return(
+                      <button key={d.v} onClick={()=>{const days=active?newConfig.weekDays.filter(x=>x!==d.v):[...newConfig.weekDays,d.v].sort();setNewConfig({...newConfig,weekDays:days});}}
+                        style={{fontSize:"0.7rem",padding:"4px 10px",borderRadius:"8px",cursor:"pointer",border:`1px solid ${active?C.em:C.bg7}`,background:active?C.emBg:"transparent",color:active?C.em2:C.z5,fontWeight:active?700:400,display:"flex",alignItems:"center",gap:"4px",transition:"all 0.15s"}}>
+                        {active&&<span style={{fontSize:"0.75rem",fontWeight:900,color:C.em2}}>✔</span>}
+                        {d.l}
+                      </button>
+                    );})}
+                  </div>
+                  <div style={{fontSize:"0.62rem",color:C.z5,marginTop:"6px"}}>💡 Los horarios se configuran al crear el primer ciclo del alumno</div>
+                </div>
                 <button onClick={addStudent} disabled={!newName.trim()||newPin.length!==4}
                   style={{width:"100%",marginTop:"4px",background:newName.trim()&&newPin.length===4?C.sky6:"rgba(63,63,70,0.4)",border:"none",color:newName.trim()&&newPin.length===4?"white":C.z6,padding:"8px",borderRadius:"9px",fontSize:"0.82rem",cursor:newName.trim()&&newPin.length===4?"pointer":"not-allowed",fontWeight:700}}>
                   Agregar alumno →
@@ -674,7 +689,13 @@ function ClassCard({cls,seqNum,role,cycleConfig,onUpdate,onUpdateRecalc,onCancel
 
 function NewCycleCard({studentConfig,onAdd}){
   const[startDate,setStartDate]=useState(isoToday());
-  const[config,setConfig]=useState({...DEFAULT_CONFIG,classesPerCycle:studentConfig?.classesPerCycle||12,amount:studentConfig?.amount||660000,dayTimeOptions:{}});
+  // CHANGE 2: inherit days from student config, start with those days selected
+  const[config,setConfig]=useState(()=>({
+    classesPerCycle:studentConfig?.classesPerCycle||12,
+    amount:studentConfig?.amount||660000,
+    weekDays:studentConfig?.weekDays||[],
+    dayTimeOptions:{},
+  }));
   const inp={width:"100%",background:C.bg,border:`1px solid ${C.bg7}`,borderRadius:"8px",padding:"7px 10px",color:C.z2,fontSize:"0.875rem",outline:"none",boxSizing:"border-box"};
   return(
     <div style={{borderRadius:"14px",border:`2px dashed ${C.sky6}`,background:"rgba(14,165,233,0.04)",padding:"20px"}}>
@@ -887,10 +908,10 @@ function AppMain({session,systemConfig,onSystemSave,onLogout}){
     unsubStudent.current=unsub;return()=>unsub();
   },[role,selectedStudentId,session.studentId,systemConfig?.teacherName]);
 
+  // CHANGE 3: never auto-select first student — wait for user to choose
   useEffect(()=>{
-    if(canManage(role)&&!selectedStudentId&&systemConfig?.students?.length>0)
-      setSelectedStudentId(systemConfig.students[0].id);
-  },[role,systemConfig?.students?.length,systemConfig?.students?.[0]?.id]);
+    if(canManage(role)&&!selectedStudentId)setSelectedStudentId(null);
+  },[role]);
 
   const currentStudentId=role==="alumno"?session.studentId:selectedStudentId;
   const currentStudentObj=systemConfig.students?.find(s=>s.id===currentStudentId);
