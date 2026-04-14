@@ -642,12 +642,20 @@ function ClassCard({cls,seqNum,role,cycleConfig,onUpdate,onUpdateRecalc,onCancel
               {cls.isMakeup&&<Badge label="⚡ Reposición" color="yellow"/>}
             </div>
             {!isCanc&&!isReschd&&!editing&&(
-              <div style={{display:"flex",gap:"4px",marginTop:"3px",flexWrap:"wrap"}}>
-                {displayOpts.map((t,i)=>{const isA=t===agreedTime;return(
-                  <span key={i} style={{padding:"1px 7px",borderRadius:"6px",fontSize:"0.65rem",fontWeight:700,background:isA?"rgba(5,150,105,0.6)":"rgba(39,39,42,0.6)",border:`1px solid ${isA?"rgba(16,185,129,0.4)":C.bg7}`,color:isA?"white":C.z5}}>
-                    {fmt12(t)}{isA&&<span style={{fontSize:"0.55rem",color:"rgba(209,250,229,0.55)",marginLeft:"2px",fontWeight:400}}>acordada</span>}
-                  </span>
-                );})}
+              <div style={{marginTop:"3px"}}>
+                {isPend&&<div style={{fontSize:"0.55rem",color:C.z6,marginBottom:"3px"}}>Toca para acordar horario</div>}
+                <div style={{display:"flex",gap:"4px",flexWrap:"wrap"}}>
+                  {displayOpts.map((t,i)=>{const isA=t===agreedTime;return(
+                    isPend
+                      ?<button key={i} onClick={()=>onUpdate({...cls,time:t})} title="Tocar para acordar este horario"
+                          style={{padding:"2px 8px",borderRadius:"6px",fontSize:"0.65rem",fontWeight:700,background:isA?"rgba(5,150,105,0.6)":"rgba(39,39,42,0.6)",border:`1px solid ${isA?"rgba(16,185,129,0.4)":C.bg7}`,color:isA?"white":C.z5,cursor:"pointer",outline:"none",transition:"background 0.15s,border-color 0.15s"}}>
+                          {fmt12(t)}{isA&&<span style={{fontSize:"0.55rem",color:"rgba(209,250,229,0.55)",marginLeft:"2px",fontWeight:400}}>acordada</span>}
+                        </button>
+                      :<span key={i} style={{padding:"1px 7px",borderRadius:"6px",fontSize:"0.65rem",fontWeight:700,background:isA?"rgba(5,150,105,0.6)":"rgba(39,39,42,0.6)",border:`1px solid ${isA?"rgba(16,185,129,0.4)":C.bg7}`,color:isA?"white":C.z5}}>
+                          {fmt12(t)}{isA&&<span style={{fontSize:"0.55rem",color:"rgba(209,250,229,0.55)",marginLeft:"2px",fontWeight:400}}>acordada</span>}
+                        </span>
+                  );})}
+                </div>
               </div>
             )}
             {cls.notes&&(isCanc||isReschd)&&<div style={{fontSize:"0.68rem",marginTop:"3px",color:isCanc?"#fb7185":"#fb923c"}}>{isCanc?"🚫":"↺"} {cls.notes}</div>}
