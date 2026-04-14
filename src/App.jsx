@@ -566,7 +566,7 @@ function TimeSelector({value,options,onChange}){
             {editingIdx===idx
               ?<input type="time" value={t} autoFocus onChange={e=>editPill(idx,e.target.value)} onBlur={()=>setEditingIdx(null)} style={{width:"88px",background:"transparent",border:"none",outline:"none",fontSize:"0.75rem",fontWeight:700,padding:"5px 8px",color:isA?"white":C.z2}}/>
               :<button onClick={()=>selectAgreed(t)} style={{fontSize:"0.75rem",fontWeight:700,padding:"5px 9px",background:"transparent",border:"none",cursor:"pointer",color:isA?"white":C.z4}}>
-                {fmt12(t)}{isA&&<span style={{fontSize:"0.58rem",color:"rgba(209,250,229,0.6)",marginLeft:"3px",fontWeight:400}}>acordada</span>}
+                {fmt12(t)}{isA&&<span style={{fontSize:"0.75rem",color:"#fbbf24",marginLeft:"3px",fontWeight:700}}>✓</span>}
               </button>}
             <button onClick={()=>setEditingIdx(editingIdx===idx?null:idx)} style={{fontSize:"0.6rem",padding:"5px",background:"transparent",border:"none",borderLeft:`1px solid ${isA?"rgba(16,185,129,0.3)":C.bg7}`,cursor:"pointer",color:C.bg6}}>✏️</button>
           </div>
@@ -649,10 +649,10 @@ function ClassCard({cls,seqNum,role,cycleConfig,onUpdate,onUpdateRecalc,onCancel
                     isPend
                       ?<button key={i} onClick={()=>onUpdate({...cls,time:t})} title="Tocar para acordar este horario"
                           style={{padding:"2px 8px",borderRadius:"6px",fontSize:"0.65rem",fontWeight:700,background:isA?"rgba(5,150,105,0.6)":"rgba(39,39,42,0.6)",border:`1px solid ${isA?"rgba(16,185,129,0.4)":C.bg7}`,color:isA?"white":C.z5,cursor:"pointer",outline:"none",transition:"background 0.15s,border-color 0.15s"}}>
-                          {fmt12(t)}{isA&&<span style={{fontSize:"0.55rem",color:"rgba(209,250,229,0.55)",marginLeft:"2px",fontWeight:400}}>acordada</span>}
+                          {fmt12(t)}{isA&&<span style={{fontSize:"0.75rem",color:"#fbbf24",marginLeft:"2px",fontWeight:700}}>✓</span>}
                         </button>
                       :<span key={i} style={{padding:"1px 7px",borderRadius:"6px",fontSize:"0.65rem",fontWeight:700,background:isA?"rgba(5,150,105,0.6)":"rgba(39,39,42,0.6)",border:`1px solid ${isA?"rgba(16,185,129,0.4)":C.bg7}`,color:isA?"white":C.z5}}>
-                          {fmt12(t)}{isA&&<span style={{fontSize:"0.55rem",color:"rgba(209,250,229,0.55)",marginLeft:"2px",fontWeight:400}}>acordada</span>}
+                          {fmt12(t)}{isA&&<span style={{fontSize:"0.75rem",color:"#fbbf24",marginLeft:"2px",fontWeight:700}}>✓</span>}
                         </span>
                   );})}
                 </div>
