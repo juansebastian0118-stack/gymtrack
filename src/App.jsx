@@ -202,12 +202,12 @@ function DayTimeEditor({config,setConfig}){
                 {active&&<span style={{fontSize:"0.75rem",fontWeight:900,lineHeight:1,color:editing?C.sky:C.em2}}>✔</span>}
                 {d.l}
               </button>
-              {active&&<button onClick={()=>setEditingTimesFor(editing?null:d.v)} style={{fontSize:"0.65rem",padding:"4px 6px",cursor:"pointer",border:"none",borderLeft:`1px solid ${editing?C.skyBd:C.emBd}`,background:editing?C.skyBg:C.emBg,color:editing?C.sky:C.em2}}>🕐</button>}
+              {active&&<button onClick={()=>openTimeEditor(d.v)} style={{fontSize:"0.65rem",padding:"4px 6px",cursor:"pointer",border:"none",borderLeft:`1px solid ${editing?C.skyBd:C.emBd}`,background:editing?C.skyBg:C.emBg,color:editing?C.sky:C.em2}}>🕐</button>}
             </div>
           );
         })}
       </div>
-      {editingTimesFor!==null&&config.dayTimeOptions?.[editingTimesFor]&&(
+      {editingTimesFor!==null&&(config.dayTimeOptions?.[editingTimesFor]||[]).length>0&&(
         <div style={{background:C.skyBg,border:`1px solid ${C.skyBd}`,borderRadius:"10px",padding:"12px",marginBottom:"10px"}}>
           <div style={{fontSize:"0.72rem",fontWeight:700,color:C.sky,marginBottom:"6px"}}>Horarios — {DAY_NAMES_SHORT[editingTimesFor]}</div>
           <div style={{fontSize:"0.62rem",color:C.z4,marginBottom:"8px"}}>El 1.º es la hora acordada por defecto</div>
