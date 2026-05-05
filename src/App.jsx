@@ -2,7 +2,6 @@ import { useState, useEffect, useRef } from "react";
 import { db } from "./firebase.js";
 import { doc, onSnapshot, setDoc, collection, addDoc, getDoc } from "firebase/firestore";
 
-// ─── DATE HELPERS ─────────────────────────────────────────────────────────
 const DAYS_ES   = ["Dom","Lun","Mar","Mié","Jue","Vie","Sáb"];
 const MONTHS_ES = ["Enero","Febrero","Marzo","Abril","Mayo","Junio","Julio","Agosto","Septiembre","Octubre","Noviembre","Diciembre"];
 const MONTHS_SH = ["Ene","Feb","Mar","Abr","May","Jun","Jul","Ago","Sep","Oct","Nov","Dic"];
@@ -14,8 +13,8 @@ function addDays(iso,n){const d=parseLocal(iso);d.setDate(d.getDate()+n);return 
 function formatDate(iso){if(!iso)return"";const d=parseLocal(iso);return`${String(d.getDate()).padStart(2,"0")}-${MONTHS_SH[d.getMonth()]}-${String(d.getFullYear()).slice(-2)}`;}
 function dow(iso){return parseLocal(iso).getDay();}
 function nextValidDay(iso,weekDays){let c=iso;while(!weekDays.includes(dow(c)))c=addDays(c,1);return c;}
-function defaultTimeOptions(){return["05:00","06:00","07:00"];}
-function defaultTime(){return"05:00";}
+function getTimeOptions(iso,config){const d=dow(iso);if(config?.dayTimeOptions?.[d])return config.dayTimeOptions[d];return["05:00","06:00","07:00"];}
+function getDefaultTime(iso,config){return getTimeOptions(iso,config)[0];}
 function fmt12(t){if(!t)return"";const[h,m]=t.split(":").map(Number);const ap=h<12?"AM":"PM";const hh=h===0?12:h>12?h-12:h;return`${hh}${m?":"+String(m).padStart(2,"0"):""}${ap}`;}
 function doneCount(cls){return cls.filter(c=>c.status==="done").length;}
 function cancelledCount(cls){return cls.filter(c=>c.status==="cancelled").length;}
@@ -23,13 +22,6 @@ function rescheduledCount(cls){return cls.filter(c=>c.status==="rescheduled").le
 function buildSeqNums(cls,target){let n=0;return cls.map(c=>{if(c.status==="rescheduled")return null;n++;return n<=target?n:null;});}
 function cycleName(cls){const co={};cls.forEach(c=>{const m=parseLocal(c.date).getMonth();co[m]=(co[m]||0)+1;});const d=Object.entries(co).sort((a,b)=>b[1]-a[1])[0];return d?MONTHS_ES[d[0]]:"Nuevo Ciclo";}
 function slugify(name){return name.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g,"").replace(/[^a-z0-9]+/g,"-").replace(/^-|-$/g,"");}
-
-function getTimeOptions(iso,config){
-  const d=dow(iso);
-  if(config?.dayTimeOptions?.[d])return config.dayTimeOptions[d];
-  return["05:00","06:00","07:00"];
-}
-function getDefaultTime(iso,config){return getTimeOptions(iso,config)[0];}
 
 function generateClasses(startIso,config){
   const{classesPerCycle,weekDays}=config;const cls=[];let cursor=startIso;
@@ -75,7 +67,6 @@ function sanitizeCycle(cycle){
 }
 function sanitizeCycles(data){return{...data,cycles:data.cycles.map(sanitizeCycle)};}
 
-// ─── FIREBASE ─────────────────────────────────────────────────────────────
 const SYSTEM_REF=()=>doc(db,"gymtrack-system","config");
 const STUDENT_REF=(id)=>doc(db,"gymtrack-data",id);
 const AUDIT_COL=()=>collection(db,"gymtrack-audit");
@@ -85,56 +76,33 @@ function cleanData(obj){
   if(obj&&typeof obj==="object"){const r={};Object.entries(obj).forEach(([k,v])=>{if(v!==undefined)r[k]=cleanData(v);});return r;}
   return obj;
 }
-async function writeAudit(role,action,detail=""){
-  try{await addDoc(AUDIT_COL(),{role,action,detail,at:new Date().toISOString()});}
-  catch(e){console.error("Audit:",e);}
-}
-async function saveStudentData(id,data,role){
-  try{await setDoc(STUDENT_REF(id),{payload:cleanData(data),updatedAt:new Date().toISOString(),updatedBy:{role}});}
-  catch(e){console.error("Save error:",e);}
-}
-async function saveSystemConfig(cfg){
-  try{await setDoc(SYSTEM_REF(),{payload:cleanData(cfg),updatedAt:new Date().toISOString()});}
-  catch(e){console.error("System save error:",e);}
-}
+async function writeAudit(role,action,detail=""){try{await addDoc(AUDIT_COL(),{role,action,detail,at:new Date().toISOString()});}catch(e){console.error("Audit:",e);}}
+async function saveStudentData(id,data,role){try{await setDoc(STUDENT_REF(id),{payload:cleanData(data),updatedAt:new Date().toISOString(),updatedBy:{role}});}catch(e){console.error("Save error:",e);}}
+async function saveSystemConfig(cfg){try{await setDoc(SYSTEM_REF(),{payload:cleanData(cfg),updatedAt:new Date().toISOString()});}catch(e){console.error("System save error:",e);}}
+
 async function exportStudentsCSV(systemConfig){
   const rows=[["Nombre","Teléfono","Email","Clases último ciclo"]];
   for(const s of systemConfig.students||[]){
-    let lastCycleClasses=s.config?.classesPerCycle||12;
-    try{
-      const snap=await getDoc(STUDENT_REF(s.id));
-      if(snap.exists()){const p=snap.data().payload||snap.data();const cy=p.cycles||[];if(cy.length>0)lastCycleClasses=cy[cy.length-1].config?.classesPerCycle||lastCycleClasses;}
-    }catch{}
-    rows.push([s.name||"",s.phone||"",s.email||"",lastCycleClasses]);
+    let last=s.config?.classesPerCycle||12;
+    try{const snap=await getDoc(STUDENT_REF(s.id));if(snap.exists()){const p=snap.data().payload||snap.data();const cy=p.cycles||[];if(cy.length>0)last=cy[cy.length-1].config?.classesPerCycle||last;}}catch{}
+    rows.push([s.name||"",s.phone||"",s.email||"",last]);
   }
   const csv=rows.map(r=>r.map(v=>`"${String(v)}"`).join(",")).join("\n");
   const blob=new Blob(["\uFEFF"+csv],{type:"text/csv;charset=utf-8;"});
   const url=URL.createObjectURL(blob);const a=document.createElement("a");a.href=url;a.download="alumnos_gymtrack.csv";a.click();URL.revokeObjectURL(url);
 }
 
-// ─── ROLES & CONFIG ───────────────────────────────────────────────────────
-const ROLES={
-  admin:   {label:"Administrador",color:"#7c3aed"},
-  profesor:{label:"Profesor",     color:"#0284c7"},
-  alumno:  {label:"Alumno",       color:"#10b981"},
-};
-// Hard-coded PINs for admin and profesor
+const ROLES={admin:{label:"Administrador",color:"#7c3aed"},profesor:{label:"Profesor",color:"#0284c7"},alumno:{label:"Alumno",color:"#10b981"}};
 const STAFF_PINS={admin:"1848",profesor:"5678"};
-
 const DEFAULT_CONFIG={classesPerCycle:12,weekDays:[],amount:660000};
 const DEFAULT_SYSTEM={teacherName:"Yony Vega",students:[]};
 function canManage(role){return role==="admin"||role==="profesor";}
+function initStudentData(student){return{teacherName:"",studentName:student.name,cycles:[],globalConfig:{...DEFAULT_CONFIG,...(student.config||{})}};}
 
-function initStudentData(student){
-  return{teacherName:"",studentName:student.name,cycles:[],globalConfig:{...DEFAULT_CONFIG,...(student.config||{})}};
-}
-
-// ─── SESSION ──────────────────────────────────────────────────────────────
 let _memSession=null;
 function loadSession(){try{const v=sessionStorage.getItem("gymtrack-session");if(v){_memSession=JSON.parse(v);return _memSession;}}catch{}return _memSession;}
 function saveSession(s){_memSession=s||null;try{if(s)sessionStorage.setItem("gymtrack-session",JSON.stringify(s));else sessionStorage.removeItem("gymtrack-session");}catch{}}
 
-// ─── COLORS ───────────────────────────────────────────────────────────────
 const C={
   bg:"#09090b",bg9:"#18181b",bg8:"#27272a",bg7:"#3f3f46",bg6:"#52525b",
   z1:"#f4f4f5",z2:"#e4e4e7",z3:"#d4d4d8",z4:"#a1a1aa",z5:"#71717a",z6:"#52525b",
@@ -152,16 +120,8 @@ function Badge({label,color}){
   return<span style={{fontSize:"0.62rem",padding:"2px 7px",borderRadius:"999px",border:`1px solid ${s.bd}`,background:s.bg,color:s.tx,fontWeight:600,whiteSpace:"nowrap"}}>{label}</span>;
 }
 
-// ─── DAY TIME EDITOR ──────────────────────────────────────────────────────
-// Order: Lun, Mar, Mié, Jue, Vie, Sáb, Dom
 const DAY_OPT_ORDERED=[{v:1,l:"Lun"},{v:2,l:"Mar"},{v:3,l:"Mié"},{v:4,l:"Jue"},{v:5,l:"Vie"},{v:6,l:"Sáb"},{v:0,l:"Dom"}];
 const DAY_NAMES_SHORT={0:"Dom",1:"Lun",2:"Mar",3:"Mié",4:"Jue",5:"Vie",6:"Sáb"};
-
-function buildDefaultDayTimeOptions(weekDays){
-  const r={};
-  weekDays.forEach(d=>{r[d]=["05:00","06:00","07:00"];});
-  return r;
-}
 
 function DayTimeEditor({config,setConfig}){
   const[editingTimesFor,setEditingTimesFor]=useState(null);
@@ -169,13 +129,11 @@ function DayTimeEditor({config,setConfig}){
   function toggleDay(d){
     const days=config.weekDays.includes(d)?config.weekDays.filter(x=>x!==d):[...config.weekDays,d].sort();
     const dto={...(config.dayTimeOptions||{})};
-    if(!days.includes(d)){delete dto[d];}
-    else if(!dto[d]){dto[d]=["05:00","06:00","07:00"];}
+    if(!days.includes(d)){delete dto[d];}else if(!dto[d]){dto[d]=["05:00","06:00","07:00"];}
     setConfig({...config,weekDays:days,dayTimeOptions:dto});
     if(editingTimesFor===d)setEditingTimesFor(null);
   }
 
-  // FIX: when clicking 🕐, auto-init times if missing, then open editor
   function openTimeEditor(d){
     const dto={...(config.dayTimeOptions||{})};
     if(!dto[d])dto[d]=["05:00","06:00","07:00"];
@@ -184,6 +142,7 @@ function DayTimeEditor({config,setConfig}){
     }
     setEditingTimesFor(editingTimesFor===d?null:d);
   }
+
   function updateDayTime(d,idx,val){
     const dto={...(config.dayTimeOptions||{}),[d]:[...(config.dayTimeOptions?.[d]||[])]};
     dto[d][idx]=val;setConfig({...config,dayTimeOptions:dto});
@@ -194,8 +153,7 @@ function DayTimeEditor({config,setConfig}){
       <label style={{fontSize:"0.68rem",color:C.z4,display:"block",marginBottom:"6px"}}>Días de clase · toca 🕐 para editar horarios</label>
       <div style={{display:"flex",flexWrap:"wrap",gap:"5px",marginBottom:"10px"}}>
         {DAY_OPT_ORDERED.map(d=>{
-          const active=config.weekDays.includes(d.v);
-          const editing=editingTimesFor===d.v;
+          const active=config.weekDays.includes(d.v);const editing=editingTimesFor===d.v;
           return(
             <div key={d.v} style={{display:"flex",alignItems:"center",borderRadius:"8px",border:`1px solid ${active?(editing?C.sky:C.em):C.bg7}`,overflow:"hidden",transition:"border-color 0.15s"}}>
               <button onClick={()=>toggleDay(d.v)} style={{fontSize:"0.7rem",padding:"4px 9px",cursor:"pointer",border:"none",background:active?(editing?C.skyBg:C.emBg):"transparent",color:active?(editing?C.sky:C.em2):C.z5,fontWeight:active?700:400,display:"flex",alignItems:"center",gap:"4px",transition:"all 0.15s"}}>
@@ -226,7 +184,6 @@ function DayTimeEditor({config,setConfig}){
   );
 }
 
-// ─── GYM LOGO ─────────────────────────────────────────────────────────────
 function GymLogo({size="md"}){
   const big=size==="lg";
   return(
@@ -237,7 +194,6 @@ function GymLogo({size="md"}){
   );
 }
 
-// ─── GYM IMAGES ───────────────────────────────────────────────────────────
 const GYM_IMAGES=[
   "https://images.unsplash.com/photo-1534438327276-14e5300c3a48?w=900&q=80",
   "https://images.unsplash.com/photo-1571019614242-c5c5dee9f50b?w=900&q=80",
@@ -245,7 +201,6 @@ const GYM_IMAGES=[
   "https://images.unsplash.com/photo-1583454110551-21f2fa2afe61?w=900&q=80",
 ];
 
-// ─── LOGIN SCREEN ─────────────────────────────────────────────────────────
 function LoginScreen({systemConfig,onLogin}){
   const[step,setStep]=useState("role");
   const[selectedRole,setSelectedRole]=useState(null);
@@ -254,17 +209,11 @@ function LoginScreen({systemConfig,onLogin}){
   const[error,setError]=useState("");
   const[search,setSearch]=useState("");
   const[imgIdx,setImgIdx]=useState(0);
-
   useEffect(()=>{const t=setInterval(()=>setImgIdx(i=>(i+1)%GYM_IMAGES.length),4000);return()=>clearInterval(t);},[]);
-
   const students=systemConfig?.students||[];
   const filtered=students.filter(s=>s.name.toLowerCase().includes(search.toLowerCase()));
-
-  function selectRole(role){setSelectedRole(role);setPin("");setError("");
-    if(role==="alumno")setStep("student");else setStep("pin");
-  }
+  function selectRole(role){setSelectedRole(role);setPin("");setError("");if(role==="alumno")setStep("student");else setStep("pin");}
   function selectStudent(s){setSelectedStudent(s);setStep("pin");setPin("");setError("");}
-
   function handleDigit(d){
     if(pin.length>=4)return;
     const next=pin+d;setPin(next);setError("");
@@ -273,24 +222,17 @@ function LoginScreen({systemConfig,onLogin}){
       if(selectedRole==="admin")correct=STAFF_PINS.admin;
       else if(selectedRole==="profesor")correct=STAFF_PINS.profesor;
       else if(selectedRole==="alumno")correct=selectedStudent?.pin||"0000";
-      if(next===correct){
-        onLogin({role:selectedRole,studentId:selectedRole==="alumno"?selectedStudent.id:null,studentName:selectedRole==="alumno"?selectedStudent.name:null});
-      }else{
-        setTimeout(()=>{setPin("");setError("PIN incorrecto, intenta de nuevo.");},400);
-      }
+      if(next===correct){onLogin({role:selectedRole,studentId:selectedRole==="alumno"?selectedStudent.id:null,studentName:selectedRole==="alumno"?selectedStudent.name:null});}
+      else{setTimeout(()=>{setPin("");setError("PIN incorrecto, intenta de nuevo.");},400);}
     }
   }
   function handleBack(){setPin(p=>p.slice(0,-1));setError("");}
   function goBack(){setStep(selectedRole==="alumno"?"student":"role");setPin("");setError("");}
   function goAdmin(){setSelectedRole("admin");setPin("");setError("");setStep("pin");}
-
   const roleColor=selectedRole?ROLES[selectedRole]?.color:"#71717a";
-
   return(
     <div style={{minHeight:"100vh",background:C.bg,fontFamily:"'DM Sans',system-ui,sans-serif",display:"flex",flexDirection:"column"}}>
       <style>{`@import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;600;700;800&display=swap');*{box-sizing:border-box;-webkit-tap-highlight-color:transparent;}body{margin:0;padding:0;background:#09090b;}input,button{font-family:inherit;-webkit-appearance:none;appearance:none;}`}</style>
-
-      {/* Hero */}
       <div style={{position:"relative",height:"240px",overflow:"hidden",flexShrink:0}}>
         {GYM_IMAGES.map((src,i)=>(
           <img key={i} src={src} alt="gym" style={{position:"absolute",inset:0,width:"100%",height:"100%",objectFit:"cover",opacity:i===imgIdx?1:0,transition:"opacity 1.2s ease",filter:"brightness(0.45)"}}/>
@@ -305,43 +247,34 @@ function LoginScreen({systemConfig,onLogin}){
           {GYM_IMAGES.map((_,i)=><div key={i} onClick={()=>setImgIdx(i)} style={{width:"6px",height:"6px",borderRadius:"50%",background:i===imgIdx?"white":"rgba(255,255,255,0.3)",cursor:"pointer"}}/>)}
         </div>
       </div>
-
-      {/* Auth */}
       <div style={{flex:1,display:"flex",alignItems:"flex-start",justifyContent:"center",padding:"24px 20px 80px"}}>
         <div style={{width:"100%",maxWidth:"360px"}}>
-
           {step==="role"&&(
             <div>
               <div style={{fontSize:"0.82rem",color:C.z4,textAlign:"center",marginBottom:"16px"}}>Selecciona tu perfil</div>
               <div style={{display:"flex",flexDirection:"column",gap:"9px"}}>
                 {[["profesor","Profesor"],["alumno","Alumno"]].map(([key])=>{const r=ROLES[key];return(
-                  <button key={key} onClick={()=>selectRole(key)}
-                    style={{padding:"14px 18px",borderRadius:"12px",border:`1px solid ${C.bg7}`,background:C.bg9,color:C.z2,fontSize:"0.9rem",fontWeight:600,cursor:"pointer",display:"flex",alignItems:"center",gap:"12px"}}>
+                  <button key={key} onClick={()=>selectRole(key)} style={{padding:"14px 18px",borderRadius:"12px",border:`1px solid ${C.bg7}`,background:C.bg9,color:C.z2,fontSize:"0.9rem",fontWeight:600,cursor:"pointer",display:"flex",alignItems:"center",gap:"12px"}}>
                     <span style={{width:"10px",height:"10px",borderRadius:"50%",background:r.color,flexShrink:0,boxShadow:`0 0 8px ${r.color}88`}}/>
-                    {r.label}
-                    <span style={{marginLeft:"auto",color:C.z6,fontSize:"0.75rem"}}>→</span>
+                    {r.label}<span style={{marginLeft:"auto",color:C.z6,fontSize:"0.75rem"}}>→</span>
                   </button>
                 );})}
               </div>
             </div>
           )}
-
           {step==="student"&&(
             <div>
               <button onClick={()=>setStep("role")} style={{background:"none",border:"none",color:C.z5,fontSize:"0.75rem",cursor:"pointer",marginBottom:"16px",display:"flex",alignItems:"center",gap:"4px"}}>← Cambiar perfil</button>
               <div style={{fontSize:"0.82rem",color:C.z4,marginBottom:"10px"}}>Selecciona tu nombre</div>
-              <input value={search} onChange={e=>setSearch(e.target.value)} placeholder="Buscar alumno..."
-                style={{width:"100%",background:C.bg8,border:`1px solid ${C.bg7}`,borderRadius:"9px",padding:"8px 12px",color:C.z2,fontSize:"0.875rem",outline:"none",marginBottom:"10px",boxSizing:"border-box"}}/>
+              <input value={search} onChange={e=>setSearch(e.target.value)} placeholder="Buscar alumno..." style={{width:"100%",background:C.bg8,border:`1px solid ${C.bg7}`,borderRadius:"9px",padding:"8px 12px",color:C.z2,fontSize:"0.875rem",outline:"none",marginBottom:"10px",boxSizing:"border-box"}}/>
               <div style={{maxHeight:"260px",overflowY:"auto",display:"flex",flexDirection:"column",gap:"6px"}}>
                 {filtered.length===0&&<div style={{color:C.z5,fontSize:"0.78rem",textAlign:"center",padding:"20px"}}>No hay alumnos registrados aún</div>}
                 {filtered.map(s=>(
-                  <button key={s.id} onClick={()=>selectStudent(s)}
-                    style={{padding:"11px 16px",borderRadius:"10px",border:`1px solid ${C.bg7}`,background:C.bg9,color:C.z2,fontSize:"0.875rem",fontWeight:600,cursor:"pointer",textAlign:"left"}}>{s.name}</button>
+                  <button key={s.id} onClick={()=>selectStudent(s)} style={{padding:"11px 16px",borderRadius:"10px",border:`1px solid ${C.bg7}`,background:C.bg9,color:C.z2,fontSize:"0.875rem",fontWeight:600,cursor:"pointer",textAlign:"left"}}>{s.name}</button>
                 ))}
               </div>
             </div>
           )}
-
           {step==="pin"&&(
             <div>
               <button onClick={goBack} style={{background:"none",border:"none",color:C.z5,fontSize:"0.75rem",cursor:"pointer",marginBottom:"16px",display:"flex",alignItems:"center",gap:"4px"}}>← Volver</button>
@@ -358,25 +291,18 @@ function LoginScreen({systemConfig,onLogin}){
               </div>
               <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:"9px"}}>
                 {[1,2,3,4,5,6,7,8,9,"",0,"⌫"].map((d,i)=>(
-                  <button key={i} onClick={()=>d===""?null:d==="⌫"?handleBack():handleDigit(String(d))} disabled={d===""}
-                    style={{padding:"15px",borderRadius:"11px",fontSize:"1.05rem",fontWeight:700,cursor:d===""?"default":"pointer",border:`1px solid ${C.bg7}`,background:d===""?"transparent":C.bg9,color:d==="⌫"?C.z4:C.z2,opacity:d===""?0:1}}>{d}</button>
+                  <button key={i} onClick={()=>d===""?null:d==="⌫"?handleBack():handleDigit(String(d))} disabled={d===""} style={{padding:"15px",borderRadius:"11px",fontSize:"1.05rem",fontWeight:700,cursor:d===""?"default":"pointer",border:`1px solid ${C.bg7}`,background:d===""?"transparent":C.bg9,color:d==="⌫"?C.z4:C.z2,opacity:d===""?0:1}}>{d}</button>
                 ))}
               </div>
             </div>
           )}
         </div>
       </div>
-
-      {/* Admin floating button */}
-      <button onClick={goAdmin}
-        style={{position:"fixed",bottom:"18px",right:"18px",width:"44px",height:"44px",borderRadius:"10px",background:"rgba(39,39,42,0.85)",border:`1px solid ${C.bg7}`,color:C.z5,fontSize:"0.58rem",fontWeight:700,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",boxShadow:"0 2px 12px rgba(0,0,0,0.4)"}}>
-        Admin
-      </button>
+      <button onClick={goAdmin} style={{position:"fixed",bottom:"18px",right:"18px",width:"44px",height:"44px",borderRadius:"10px",background:"rgba(39,39,42,0.85)",border:`1px solid ${C.bg7}`,color:C.z5,fontSize:"0.58rem",fontWeight:700,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",boxShadow:"0 2px 12px rgba(0,0,0,0.4)"}}>Admin</button>
     </div>
   );
 }
 
-// ─── STUDENT SELECTOR ─────────────────────────────────────────────────────
 function StudentSelector({students,selectedId,onSelect}){
   const[open,setOpen]=useState(false);const[search,setSearch]=useState("");
   const current=students.find(s=>s.id===selectedId);
@@ -390,12 +316,10 @@ function StudentSelector({students,selectedId,onSelect}){
       </button>
       {open&&(
         <div style={{position:"absolute",top:"calc(100% + 6px)",left:0,zIndex:100,background:C.bg9,border:`1px solid ${C.bg7}`,borderRadius:"12px",padding:"8px",minWidth:"220px",maxWidth:"280px",boxShadow:"0 8px 30px rgba(0,0,0,0.5)"}}>
-          <input value={search} onChange={e=>setSearch(e.target.value)} placeholder="Buscar..." autoFocus
-            style={{width:"100%",background:C.bg8,border:`1px solid ${C.bg7}`,borderRadius:"7px",padding:"6px 10px",color:C.z2,fontSize:"0.78rem",outline:"none",marginBottom:"6px"}}/>
+          <input value={search} onChange={e=>setSearch(e.target.value)} placeholder="Buscar..." autoFocus style={{width:"100%",background:C.bg8,border:`1px solid ${C.bg7}`,borderRadius:"7px",padding:"6px 10px",color:C.z2,fontSize:"0.78rem",outline:"none",marginBottom:"6px"}}/>
           <div style={{maxHeight:"200px",overflowY:"auto",display:"flex",flexDirection:"column",gap:"3px"}}>
             {filtered.map(s=>(
-              <button key={s.id} onClick={()=>{onSelect(s.id);setOpen(false);setSearch("");}}
-                style={{padding:"8px 10px",borderRadius:"8px",border:"none",background:s.id===selectedId?C.emBg:"transparent",color:s.id===selectedId?C.em2:C.z3,fontSize:"0.8rem",cursor:"pointer",textAlign:"left",fontWeight:s.id===selectedId?700:400}}>{s.name}</button>
+              <button key={s.id} onClick={()=>{onSelect(s.id);setOpen(false);setSearch("");}} style={{padding:"8px 10px",borderRadius:"8px",border:"none",background:s.id===selectedId?C.emBg:"transparent",color:s.id===selectedId?C.em2:C.z3,fontSize:"0.8rem",cursor:"pointer",textAlign:"left",fontWeight:s.id===selectedId?700:400}}>{s.name}</button>
             ))}
             {filtered.length===0&&<div style={{color:C.z5,fontSize:"0.75rem",padding:"8px",textAlign:"center"}}>Sin resultados</div>}
           </div>
@@ -405,7 +329,6 @@ function StudentSelector({students,selectedId,onSelect}){
   );
 }
 
-// ─── ADMIN PANEL ──────────────────────────────────────────────────────────
 function AdminPanel({systemConfig,role,onSave,onClose}){
   const[tab,setTab]=useState("students");
   const[students,setStudents]=useState(()=>JSON.parse(JSON.stringify(systemConfig.students||[])));
@@ -414,7 +337,6 @@ function AdminPanel({systemConfig,role,onSave,onClose}){
   const[newPin,setNewPin]=useState("");
   const[newEmail,setNewEmail]=useState("");
   const[newPhone,setNewPhone]=useState("");
-  // CHANGE 1: blank classes/amount, no dayTimeOptions in admin form
   const[newConfig,setNewConfig]=useState({classesPerCycle:"",weekDays:[],amount:"",dayTimeOptions:{}});
   const[saved,setSaved]=useState(false);
   const inp={width:"100%",background:C.bg,border:`1px solid ${C.bg7}`,borderRadius:"8px",padding:"7px 10px",color:C.z2,fontSize:"0.875rem",outline:"none",boxSizing:"border-box"};
@@ -422,14 +344,12 @@ function AdminPanel({systemConfig,role,onSave,onClose}){
   function addStudent(){
     if(!newName.trim()||newPin.length!==4)return;
     const id=slugify(newName)+"-"+Date.now().toString(36);
-    setStudents([...students,{id,name:newName.trim(),pin:newPin,email:newEmail.trim(),phone:newPhone.trim(),
-      config:{classesPerCycle:newConfig.classesPerCycle||12,weekDays:newConfig.weekDays,amount:newConfig.amount||660000,dayTimeOptions:{}}}]);
+    setStudents([...students,{id,name:newName.trim(),pin:newPin,email:newEmail.trim(),phone:newPhone.trim(),config:{classesPerCycle:newConfig.classesPerCycle||12,weekDays:newConfig.weekDays,amount:newConfig.amount||660000,dayTimeOptions:{}}}]);
     setNewName("");setNewPin("");setNewEmail("");setNewPhone("");
     setNewConfig({classesPerCycle:"",weekDays:[],amount:"",dayTimeOptions:{}});
   }
   function removeStudent(id){if(role!=="admin")return;setStudents(students.filter(s=>s.id!==id));}
   function updateStudentPin(id,p){setStudents(students.map(s=>s.id===id?{...s,pin:p}:s));}
-
   async function handleSave(){
     await onSave({...systemConfig,students,teacherName});
     await writeAudit(role,"admin_panel_save",`students:${students.length}`);
@@ -448,9 +368,7 @@ function AdminPanel({systemConfig,role,onSave,onClose}){
             <button key={t.id} onClick={()=>setTab(t.id)} style={{padding:"6px 12px",borderRadius:"8px 8px 0 0",border:"none",background:tab===t.id?C.bg8:"transparent",color:tab===t.id?C.z1:C.z5,fontSize:"0.78rem",fontWeight:600,cursor:"pointer"}}>{t.l}</button>
           ))}
         </div>
-
         <div style={{flex:1,overflowY:"auto",padding:"16px 18px"}}>
-
           {tab==="students"&&(
             <div>
               <div style={{fontSize:"0.75rem",color:C.z4,marginBottom:"12px"}}>Alumnos: <strong style={{color:C.z2}}>{students.length}</strong></div>
@@ -460,23 +378,16 @@ function AdminPanel({systemConfig,role,onSave,onClose}){
                     <div style={{flex:1,minWidth:0}}>
                       <div style={{fontSize:"0.82rem",fontWeight:600,color:C.z2,marginBottom:"1px"}}>{s.name}</div>
                       <div style={{fontSize:"0.62rem",color:C.z5}}>{s.phone||"sin tel"} · {s.email||"sin email"}</div>
-                      <div style={{fontSize:"0.62rem",color:C.z6}}>{s.config?.classesPerCycle||12} clases · PIN: {"•".repeat(4)}</div>
+                      <div style={{fontSize:"0.62rem",color:C.z6}}>{s.config?.classesPerCycle||12} clases</div>
                     </div>
                     <div style={{display:"flex",alignItems:"center",gap:"6px"}}>
-                      <div style={{display:"flex",alignItems:"center",gap:"4px"}}>
-                        <span style={{fontSize:"0.65rem",color:C.z5}}>PIN:</span>
-                        <input type="password" maxLength={4} value={s.pin} onChange={e=>updateStudentPin(s.id,e.target.value.replace(/\D/g,"").slice(0,4))}
-                          style={{width:"52px",background:C.bg,border:`1px solid ${C.bg7}`,borderRadius:"6px",padding:"3px 6px",color:C.z2,fontSize:"0.8rem",outline:"none",textAlign:"center",letterSpacing:"0.2em"}}/>
-                      </div>
-                      {role==="admin"&&(
-                        <button onClick={()=>removeStudent(s.id)} style={{background:C.roseBg,border:`1px solid ${C.roseBd}`,color:"#fb7185",borderRadius:"6px",padding:"3px 8px",fontSize:"0.7rem",cursor:"pointer"}}>✕</button>
-                      )}
+                      <span style={{fontSize:"0.65rem",color:C.z5}}>PIN:</span>
+                      <input type="password" maxLength={4} value={s.pin} onChange={e=>updateStudentPin(s.id,e.target.value.replace(/\D/g,"").slice(0,4))} style={{width:"52px",background:C.bg,border:`1px solid ${C.bg7}`,borderRadius:"6px",padding:"3px 6px",color:C.z2,fontSize:"0.8rem",outline:"none",textAlign:"center",letterSpacing:"0.2em"}}/>
+                      {role==="admin"&&<button onClick={()=>removeStudent(s.id)} style={{background:C.roseBg,border:`1px solid ${C.roseBd}`,color:"#fb7185",borderRadius:"6px",padding:"3px 8px",fontSize:"0.7rem",cursor:"pointer"}}>✕</button>}
                     </div>
                   </div>
                 ))}
               </div>
-
-              {/* New student form */}
               <div style={{borderRadius:"12px",border:`2px dashed ${C.sky6}`,background:"rgba(14,165,233,0.04)",padding:"16px"}}>
                 <div style={{display:"flex",alignItems:"center",gap:"8px",marginBottom:"14px"}}>
                   <div style={{width:"26px",height:"26px",borderRadius:"7px",background:C.skyBg,border:`1px solid ${C.skyBd}`,display:"flex",alignItems:"center",justifyContent:"center",fontSize:"0.85rem"}}>➕</div>
@@ -487,8 +398,7 @@ function AdminPanel({systemConfig,role,onSave,onClose}){
                 </div>
                 <div style={{display:"grid",gridTemplateColumns:"1fr 80px",gap:"7px",marginBottom:"8px"}}>
                   <input value={newName} onChange={e=>setNewName(e.target.value)} placeholder="Nombre completo" style={inp}/>
-                  <input type="password" maxLength={4} value={newPin} onChange={e=>setNewPin(e.target.value.replace(/\D/g,"").slice(0,4))} placeholder="PIN"
-                    style={{...inp,textAlign:"center",letterSpacing:"0.2em"}}/>
+                  <input type="password" maxLength={4} value={newPin} onChange={e=>setNewPin(e.target.value.replace(/\D/g,"").slice(0,4))} placeholder="PIN" style={{...inp,textAlign:"center",letterSpacing:"0.2em"}}/>
                 </div>
                 <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:"7px",marginBottom:"8px"}}>
                   <input type="email" value={newEmail} onChange={e=>setNewEmail(e.target.value)} placeholder="Email (opcional)" style={inp}/>
@@ -498,7 +408,6 @@ function AdminPanel({systemConfig,role,onSave,onClose}){
                   <div><label style={{fontSize:"0.65rem",color:C.z5,display:"block",marginBottom:"3px"}}>Clases por ciclo</label><input type="number" min="1" max="30" value={newConfig.classesPerCycle} onChange={e=>setNewConfig({...newConfig,classesPerCycle:e.target.value})} placeholder="ej: 12" style={inp}/></div>
                   <div><label style={{fontSize:"0.65rem",color:C.z5,display:"block",marginBottom:"3px"}}>Monto COP</label><input type="number" value={newConfig.amount} onChange={e=>setNewConfig({...newConfig,amount:e.target.value})} placeholder="ej: 660000" style={inp}/></div>
                 </div>
-                {/* CHANGE 1: only days, no time editor */}
                 <div style={{marginBottom:"10px"}}>
                   <label style={{fontSize:"0.68rem",color:C.z4,display:"block",marginBottom:"6px"}}>Días de clase</label>
                   <div style={{display:"flex",flexWrap:"wrap",gap:"5px"}}>
@@ -519,30 +428,20 @@ function AdminPanel({systemConfig,role,onSave,onClose}){
               </div>
             </div>
           )}
-
           {tab==="pins"&&(
             <div>
-              <div style={{fontSize:"0.75rem",color:C.z4,marginBottom:"14px"}}>
-                Los PINs de Admin y Profesor están definidos en el código fuente de la app.
-                {role==="admin"&&" Para cambiarlos, edita la constante STAFF_PINS en App.jsx."}
-              </div>
+              <div style={{fontSize:"0.75rem",color:C.z4,marginBottom:"14px"}}>Los PINs de Admin y Profesor están definidos en el código fuente.</div>
               <div style={{display:"flex",flexDirection:"column",gap:"8px"}}>
                 {[["admin","Administrador",ROLES.admin.color],["profesor","Profesor",ROLES.profesor.color]].map(([key,label,color])=>(
                   <div key={key} style={{background:C.bg8,borderRadius:"9px",padding:"10px 14px",display:"flex",alignItems:"center",justifyContent:"space-between"}}>
-                    <div style={{display:"flex",alignItems:"center",gap:"8px"}}>
-                      <span style={{width:"8px",height:"8px",borderRadius:"50%",background:color}}/>
-                      <span style={{fontSize:"0.82rem",color:C.z2,fontWeight:600}}>{label}</span>
-                    </div>
+                    <div style={{display:"flex",alignItems:"center",gap:"8px"}}><span style={{width:"8px",height:"8px",borderRadius:"50%",background:color}}/><span style={{fontSize:"0.82rem",color:C.z2,fontWeight:600}}>{label}</span></div>
                     <span style={{fontSize:"0.75rem",color:C.z5,letterSpacing:"0.2em"}}>••••</span>
                   </div>
                 ))}
               </div>
-              <div style={{marginTop:"12px",fontSize:"0.65rem",color:C.z6,padding:"8px 10px",background:C.bg8,borderRadius:"8px",border:`1px solid ${C.bg7}`}}>
-                🔒 Los PINs de alumnos se editan directamente en la lista de la pestaña Alumnos.
-              </div>
+              <div style={{marginTop:"12px",fontSize:"0.65rem",color:C.z6,padding:"8px 10px",background:C.bg8,borderRadius:"8px",border:`1px solid ${C.bg7}`}}>🔒 Los PINs de alumnos se editan en la pestaña Alumnos.</div>
             </div>
           )}
-
           {tab==="config"&&(
             <div>
               <label style={{fontSize:"0.72rem",color:C.z4,display:"block",marginBottom:"5px"}}>Nombre del profesor</label>
@@ -550,11 +449,8 @@ function AdminPanel({systemConfig,role,onSave,onClose}){
             </div>
           )}
         </div>
-
         <div style={{padding:"12px 18px",borderTop:`1px solid ${C.bg7}`,display:"flex",gap:"8px"}}>
-          <button onClick={handleSave} style={{flex:1,background:saved?"rgba(5,150,105,0.7)":C.sky6,border:"none",color:"white",padding:"8px",borderRadius:"10px",fontSize:"0.875rem",cursor:"pointer",fontWeight:700}}>
-            {saved?"✓ Guardado":"Guardar cambios"}
-          </button>
+          <button onClick={handleSave} style={{flex:1,background:saved?"rgba(5,150,105,0.7)":C.sky6,border:"none",color:"white",padding:"8px",borderRadius:"10px",fontSize:"0.875rem",cursor:"pointer",fontWeight:700}}>{saved?"✓ Guardado":"Guardar cambios"}</button>
           <button onClick={onClose} style={{flex:1,background:C.bg7,border:"none",color:C.z3,padding:"8px",borderRadius:"10px",fontSize:"0.875rem",cursor:"pointer"}}>Cancelar</button>
         </div>
       </div>
@@ -562,7 +458,6 @@ function AdminPanel({systemConfig,role,onSave,onClose}){
   );
 }
 
-// ─── TIME SELECTOR ────────────────────────────────────────────────────────
 function TimeSelector({value,options,onChange}){
   const[editingIdx,setEditingIdx]=useState(null);
   function selectAgreed(t){onChange(t,options);}
@@ -600,8 +495,7 @@ function ReasonModal({title,subtitle,accentColor,reasons,onConfirm,onClose}){
         <div style={{display:"flex",flexWrap:"wrap",gap:"5px",marginBottom:"10px"}}>
           {reasons.map(r=><button key={r} onClick={()=>setReason(r)} style={{fontSize:"0.68rem",padding:"4px 9px",borderRadius:"7px",cursor:"pointer",border:`1px solid ${reason===r?acBd:C.bg7}`,background:reason===r?acBg:C.bg8,color:reason===r?ac:C.z4}}>{r}</button>)}
         </div>
-        <input value={reason} onChange={e=>setReason(e.target.value)} placeholder="O escribe el motivo..."
-          style={{width:"100%",background:C.bg8,border:`1px solid ${C.bg7}`,borderRadius:"9px",padding:"7px 11px",color:C.z2,fontSize:"0.875rem",outline:"none",marginBottom:"12px",boxSizing:"border-box"}}/>
+        <input value={reason} onChange={e=>setReason(e.target.value)} placeholder="O escribe el motivo..." style={{width:"100%",background:C.bg8,border:`1px solid ${C.bg7}`,borderRadius:"9px",padding:"7px 11px",color:C.z2,fontSize:"0.875rem",outline:"none",marginBottom:"12px",boxSizing:"border-box"}}/>
         <div style={{display:"flex",gap:"8px"}}>
           <button onClick={()=>onConfirm(reason.trim()||"Sin motivo")} style={{flex:1,background:acBg,border:`1px solid ${acBd}`,color:ac,padding:"8px",borderRadius:"10px",fontSize:"0.875rem",cursor:"pointer",fontWeight:700}}>Confirmar</button>
           <button onClick={onClose} style={{flex:1,background:C.bg8,border:`1px solid ${C.bg7}`,color:C.z3,padding:"8px",borderRadius:"10px",fontSize:"0.875rem",cursor:"pointer"}}>Volver</button>
@@ -611,6 +505,7 @@ function ReasonModal({title,subtitle,accentColor,reasons,onConfirm,onClose}){
   );
 }
 
+// ─── CLASS CARD ───────────────────────────────────────────────────────────
 function ClassCard({cls,seqNum,role,cycleConfig,onUpdate,onUpdateRecalc,onCancel,onReschedule,isPast}){
   const[editing,setEditing]=useState(false);
   const[showCancel,setShowCancel]=useState(false);
@@ -651,13 +546,39 @@ function ClassCard({cls,seqNum,role,cycleConfig,onUpdate,onUpdateRecalc,onCancel
               {!isCanc&&!isReschd&&<Badge label={cls.type==="virtual"?"🖥 Virtual":"🏋 Presencial"} color={cls.type==="virtual"?"purple":"blue"}/>}
               {cls.isMakeup&&<Badge label="⚡ Reposición" color="yellow"/>}
             </div>
+            {/* ── HORARIOS: clickeables directamente sin abrir el lápiz ── */}
             {!isCanc&&!isReschd&&!editing&&(
-              <div style={{display:"flex",gap:"4px",marginTop:"3px",flexWrap:"wrap"}}>
-                {displayOpts.map((t,i)=>{const isA=t===agreedTime;return(
-                  <span key={i} style={{padding:"1px 7px",borderRadius:"6px",fontSize:"0.65rem",fontWeight:700,background:isA?"rgba(5,150,105,0.6)":"rgba(39,39,42,0.6)",border:`1px solid ${isA?"rgba(16,185,129,0.4)":C.bg7}`,color:isA?"white":C.z5}}>
-                    {fmt12(t)}{isA&&<span style={{fontSize:"0.55rem",color:"rgba(209,250,229,0.55)",marginLeft:"2px",fontWeight:400}}>acordada</span>}
-                  </span>
-                );})}
+              <div style={{marginTop:"4px"}}>
+                {isPend&&<div style={{fontSize:"0.55rem",color:C.z6,marginBottom:"3px"}}>Toca un horario para acordarlo</div>}
+                <div style={{display:"flex",gap:"5px",flexWrap:"wrap"}}>
+                  {displayOpts.map((t,i)=>{
+                    const isA=t===agreedTime;
+                    return(
+                      <button
+                        key={i}
+                        onClick={()=>{ if(isPend) onUpdate({...cls,time:t}); }}
+                        disabled={!isPend}
+                        style={{
+                          padding:"3px 10px",
+                          borderRadius:"7px",
+                          fontSize:"0.65rem",
+                          fontWeight:700,
+                          border:`1.5px solid ${isA?"rgba(16,185,129,0.7)":C.bg7}`,
+                          background:isA?"rgba(5,150,105,0.75)":"rgba(39,39,42,0.7)",
+                          color:isA?"white":C.z4,
+                          cursor:isPend?"pointer":"default",
+                          outline:"none",
+                          transition:"all 0.15s",
+                          boxShadow:isA?"0 0 8px rgba(16,185,129,0.3)":"none",
+                          transform:isA?"scale(1.06)":"scale(1)",
+                        }}
+                      >
+                        {fmt12(t)}
+                        {isA&&<span style={{fontSize:"0.6rem",color:"rgba(167,243,208,0.9)",marginLeft:"4px"}}>✔</span>}
+                      </button>
+                    );
+                  })}
+                </div>
               </div>
             )}
             {cls.notes&&(isCanc||isReschd)&&<div style={{fontSize:"0.68rem",marginTop:"3px",color:isCanc?"#fb7185":"#fb923c"}}>{isCanc?"🚫":"↺"} {cls.notes}</div>}
@@ -699,13 +620,7 @@ function ClassCard({cls,seqNum,role,cycleConfig,onUpdate,onUpdateRecalc,onCancel
 
 function NewCycleCard({studentConfig,onAdd}){
   const[startDate,setStartDate]=useState(isoToday());
-  // CHANGE 2: inherit days from student config, start with those days selected
-  const[config,setConfig]=useState(()=>({
-    classesPerCycle:studentConfig?.classesPerCycle||12,
-    amount:studentConfig?.amount||660000,
-    weekDays:studentConfig?.weekDays||[],
-    dayTimeOptions:{},
-  }));
+  const[config,setConfig]=useState(()=>({classesPerCycle:studentConfig?.classesPerCycle||12,amount:studentConfig?.amount||660000,weekDays:studentConfig?.weekDays||[],dayTimeOptions:{}}));
   const inp={width:"100%",background:C.bg,border:`1px solid ${C.bg7}`,borderRadius:"8px",padding:"7px 10px",color:C.z2,fontSize:"0.875rem",outline:"none",boxSizing:"border-box"};
   return(
     <div style={{borderRadius:"14px",border:`2px dashed ${C.sky6}`,background:"rgba(14,165,233,0.04)",padding:"20px"}}>
@@ -847,33 +762,20 @@ function CycleCard({cycle,cycleIndex,isCurrent,role,onUpdateCycle,onUpdateClass,
   );
 }
 
-// ─── MAIN APP ─────────────────────────────────────────────────────────────
 export default function App(){
   const[session,setSession]=useState(()=>loadSession());
   const[systemConfig,setSystemConfig]=useState(DEFAULT_SYSTEM);
   const[sysLoaded,setSysLoaded]=useState(false);
-
   useEffect(()=>{
     const unsub=onSnapshot(SYSTEM_REF(),snap=>{
-      if(snap.exists()){
-        const d=snap.data();
-        const payload=d.payload||d;
-        const students=Array.isArray(payload.students)?payload.students:Object.values(payload.students||{});
-        setSystemConfig({teacherName:payload.teacherName||"Yony Vega",students});
-      }else{
-        setSystemConfig(DEFAULT_SYSTEM);
-      }
+      if(snap.exists()){const d=snap.data();const payload=d.payload||d;const students=Array.isArray(payload.students)?payload.students:Object.values(payload.students||{});setSystemConfig({teacherName:payload.teacherName||"Yony Vega",students});}
+      else{setSystemConfig(DEFAULT_SYSTEM);}
       setSysLoaded(true);
     },()=>{setSysLoaded(true);});
     return()=>unsub();
   },[]);
-
-  if(!sysLoaded)return(
-    <div style={{minHeight:"100vh",background:"#09090b",display:"flex",alignItems:"center",justifyContent:"center",color:"#71717a",fontFamily:"system-ui"}}>Cargando...</div>
-  );
-
+  if(!sysLoaded)return<div style={{minHeight:"100vh",background:"#09090b",display:"flex",alignItems:"center",justifyContent:"center",color:"#71717a",fontFamily:"system-ui"}}>Cargando...</div>;
   if(!session)return<LoginScreen systemConfig={systemConfig} onLogin={s=>{saveSession(s);setSession(s);}}/>;
-
   return<AppMain session={session} systemConfig={systemConfig}
     onSystemSave={async cfg=>{setSystemConfig(cfg);await saveSystemConfig(cfg);await writeAudit(session.role,"system_config_saved","");}}
     onLogout={()=>{saveSession(null);setSession(null);}}/>;
@@ -896,29 +798,22 @@ function AppMain({session,systemConfig,onSystemSave,onLogout}){
     if(unsubStudent.current)unsubStudent.current();
     setLoading(true);
     const unsub=onSnapshot(STUDENT_REF(studentId),async snap=>{
-      if(snap.exists()){
-        const d=snap.data();
-        setStudentData(sanitizeCycles(d.payload||d));
-        setLastSaved(d.updatedAt);
-      }else if(canManage(role)){
+      if(snap.exists()){const d=snap.data();setStudentData(sanitizeCycles(d.payload||d));setLastSaved(d.updatedAt);}
+      else if(canManage(role)){
         const student=systemConfig.students?.find(s=>s.id===studentId);
         const init=initStudentData(student||{name:studentId,config:DEFAULT_CONFIG});
         init.teacherName=systemConfig.teacherName||"";
-        setStudentData(init);
-        await saveStudentData(studentId,init,role);
+        setStudentData(init);await saveStudentData(studentId,init,role);
       }else{
-        // Alumno sin datos aún
         const student=systemConfig.students?.find(s=>s.id===session.studentId);
         const init=initStudentData(student||{name:session.studentName||"Alumno",config:DEFAULT_CONFIG});
-        setStudentData(init);
-        await saveStudentData(studentId,init,role);
+        setStudentData(init);await saveStudentData(studentId,init,role);
       }
       setLoading(false);
     },err=>{console.error("Student data error:",err);setLoading(false);});
     unsubStudent.current=unsub;return()=>unsub();
   },[role,selectedStudentId,session.studentId,systemConfig?.teacherName]);
 
-  // CHANGE 3: never auto-select first student — wait for user to choose
   useEffect(()=>{
     if(canManage(role)&&!selectedStudentId)setSelectedStudentId(null);
   },[role]);
@@ -928,8 +823,7 @@ function AppMain({session,systemConfig,onSystemSave,onLogout}){
 
   async function persist(nd){
     if(!currentStudentId)return;
-    const clean=sanitizeCycles(nd);
-    setStudentData(clean);setSaving(true);
+    const clean=sanitizeCycles(nd);setStudentData(clean);setSaving(true);
     await saveStudentData(currentStudentId,clean,role);
     setSaving(false);setLastSaved(new Date().toISOString());
   }
@@ -994,10 +888,7 @@ function AppMain({session,systemConfig,onSystemSave,onLogout}){
   return(
     <div style={{minHeight:"100vh",background:C.bg,color:C.z1,fontFamily:"'DM Sans',system-ui,sans-serif"}}>
       <style>{`@import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700;800&display=swap');*{box-sizing:border-box;-webkit-tap-highlight-color:transparent;}body{margin:0;padding:0;background:#09090b;}input,select,button{font-family:inherit;-webkit-appearance:none;appearance:none;}input[type=date],input[type=time]{-webkit-appearance:none;color-scheme:dark;}`}</style>
-
       {showAdmin&&<AdminPanel systemConfig={systemConfig} role={role} onSave={onSystemSave} onClose={()=>setShowAdmin(false)}/>}
-
-      {/* Topbar */}
       <div style={{position:"sticky",top:0,zIndex:40,background:"rgba(9,9,11,0.93)",backdropFilter:"blur(10px)",WebkitBackdropFilter:"blur(10px)",borderBottom:`1px solid ${C.bg8}`}}>
         <div style={{maxWidth:"680px",margin:"0 auto",padding:"9px 14px",display:"flex",alignItems:"center",justifyContent:"space-between",gap:"10px"}}>
           <div style={{display:"flex",alignItems:"center",gap:"9px",minWidth:0}}>
@@ -1010,9 +901,7 @@ function AppMain({session,systemConfig,onSystemSave,onLogout}){
               </div>
             </div>
           </div>
-          {canManage(role)&&systemConfig.students?.length>0&&(
-            <StudentSelector students={systemConfig.students} selectedId={selectedStudentId} onSelect={id=>{setSelectedStudentId(id);setTab("cycles");setLoading(true);}}/>
-          )}
+          {canManage(role)&&systemConfig.students?.length>0&&(<StudentSelector students={systemConfig.students} selectedId={selectedStudentId} onSelect={id=>{setSelectedStudentId(id);setTab("cycles");setLoading(true);}}/>)}
           <div style={{display:"flex",alignItems:"center",gap:"5px",flexShrink:0}}>
             {saving?<span style={{fontSize:"0.6rem",color:C.sky}}>💾</span>:lastSaved&&<span style={{fontSize:"0.6rem",color:C.z6}}>✓</span>}
             {canManage(role)&&<button onClick={exportCSV} style={btnA} title="Exportar clases CSV">⬇️</button>}
@@ -1022,9 +911,14 @@ function AppMain({session,systemConfig,onSystemSave,onLogout}){
           </div>
         </div>
       </div>
-
       <div style={{maxWidth:"680px",margin:"0 auto",padding:"18px 14px",display:"flex",flexDirection:"column",gap:"14px"}}>
-        {canManage(role)&&!currentStudentId&&(<div style={{textAlign:"center",padding:"40px 20px",color:C.z5,fontSize:"0.875rem"}}>Selecciona un alumno para ver su seguimiento</div>)}
+        {canManage(role)&&!currentStudentId&&(
+          <div style={{textAlign:"center",padding:"60px 20px"}}>
+            <div style={{fontSize:"2rem",marginBottom:"12px"}}>👆</div>
+            <div style={{fontSize:"1rem",fontWeight:700,color:C.z2,marginBottom:"6px"}}>Selecciona un alumno</div>
+            <div style={{fontSize:"0.8rem",color:C.z5}}>Usa el selector en la barra superior para ver el seguimiento de un alumno</div>
+          </div>
+        )}
         {isLoadingData&&currentStudentId&&(<div style={{textAlign:"center",padding:"40px",color:C.z4}}>Cargando datos...</div>)}
         {!isLoadingData&&studentData&&(
           <>
