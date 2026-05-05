@@ -546,7 +546,6 @@ function ClassCard({cls,seqNum,role,cycleConfig,onUpdate,onUpdateRecalc,onCancel
               {!isCanc&&!isReschd&&<Badge label={cls.type==="virtual"?"🖥 Virtual":"🏋 Presencial"} color={cls.type==="virtual"?"purple":"blue"}/>}
               {cls.isMakeup&&<Badge label="⚡ Reposición" color="yellow"/>}
             </div>
-            {/* ── HORARIOS: clickeables directamente sin abrir el lápiz ── */}
             {!isCanc&&!isReschd&&!editing&&(
               <div style={{marginTop:"4px"}}>
                 {isPend&&<div style={{fontSize:"0.55rem",color:C.z6,marginBottom:"3px"}}>Toca un horario para acordarlo</div>}
@@ -879,9 +878,6 @@ function AppMain({session,systemConfig,onSystemSave,onLogout}){
   const currentIdx=studentData?studentData.cycles.findIndex(c=>(doneCount(c.classes)+cancelledCount(c.classes))<c.config.classesPerCycle):-1;
   const displayIdx=currentIdx===-1?(studentData?.cycles.length-1||0):currentIdx;
   const curCycle=studentData?.cycles[displayIdx];
-  const totalDone=studentData?.cycles.reduce((s,c)=>s+doneCount(c.classes),0)||0;
-  const totalTarget=studentData?.cycles.reduce((s,c)=>s+c.config.classesPerCycle,0)||0;
-  const remaining=curCycle?Math.max(0,curCycle.config.classesPerCycle-doneCount(curCycle.classes)-cancelledCount(curCycle.classes)):0;
   const btnA={fontSize:"0.7rem",padding:"5px 9px",borderRadius:"7px",cursor:"pointer",border:"none",background:C.bg8,color:C.z4};
   const roleColor=ROLES[role]?.color||C.z4;
 
@@ -928,15 +924,48 @@ function AppMain({session,systemConfig,onSystemSave,onLogout}){
                 <div style={{fontSize:"0.68rem",color:C.z5,textAlign:"right"}}><div>{currentStudentObj?.config?.classesPerCycle||12} clases/ciclo</div><div>${(currentStudentObj?.config?.amount||660000).toLocaleString("es-CO")} COP</div></div>
               </div>
             )}
+
+            {/* ── DASHBOARD STATS ─────────────────────────────────────────── */}
             <div style={{display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:"7px"}}>
-              {[{label:"Realizadas",value:totalDone,sub:`de ${totalTarget}`,color:C.em},{label:"Pendientes",value:remaining,sub:"ciclo actual",color:C.amb},{label:"Ciclos",value:studentData.cycles.length,sub:"programados",color:C.sky},{label:curCycle?.name||"-",value:curCycle?.paid?"✓":"$",sub:curCycle?.paid?"Pagado":"Sin pagar",color:curCycle?.paid?C.em:C.rose}].map((s,i)=>(
-                <div key={i} style={{background:"rgba(24,24,27,0.7)",border:`1px solid ${C.bg7}`,borderRadius:"11px",padding:"11px",textAlign:"center"}}>
-                  <div style={{fontSize:"1.35rem",fontWeight:800,color:s.color,lineHeight:1}}>{s.value}</div>
-                  <div style={{fontSize:"0.62rem",color:C.z5,marginTop:"3px"}}>{s.label}</div>
-                  <div style={{fontSize:"0.58rem",color:C.z6,marginTop:"2px"}}>{s.sub}</div>
-                </div>
-              ))}
+              {(()=>{
+                const contabilizadas=curCycle?doneCount(curCycle.classes)+cancelledCount(curCycle.classes):0;
+                const pendientes=curCycle?curCycle.classes.filter(c=>c.status==="pending").length:0;
+                return[
+                  {
+                    label:"Ciclos",
+                    value:studentData.cycles.length,
+                    sub:"programados",
+                    color:C.sky,
+                  },
+                  {
+                    label:curCycle?.name||"-",
+                    value:curCycle?.paid?"✓":"$",
+                    sub:curCycle?.paid?"Pagado":"Sin pagar",
+                    color:curCycle?.paid?C.em:C.rose,
+                  },
+                  {
+                    label:"Contabilizadas",
+                    value:contabilizadas,
+                    sub:`de ${curCycle?.config?.classesPerCycle||0} en ciclo`,
+                    color:C.amb,
+                  },
+                  {
+                    label:"Pendientes",
+                    value:pendientes,
+                    sub:"por realizar",
+                    color:C.z3,
+                  },
+                ].map((s,i)=>(
+                  <div key={i} style={{background:"rgba(24,24,27,0.7)",border:`1px solid ${C.bg7}`,borderRadius:"11px",padding:"11px",textAlign:"center"}}>
+                    <div style={{fontSize:"1.35rem",fontWeight:800,color:s.color,lineHeight:1}}>{s.value}</div>
+                    <div style={{fontSize:"0.62rem",color:C.z5,marginTop:"3px"}}>{s.label}</div>
+                    <div style={{fontSize:"0.58rem",color:C.z6,marginTop:"2px"}}>{s.sub}</div>
+                  </div>
+                ));
+              })()}
             </div>
+            {/* ─────────────────────────────────────────────────────────────── */}
+
             <div style={{display:"flex",gap:"3px",background:C.bg9,borderRadius:"11px",padding:"3px"}}>
               {[{id:"cycles",label:"📅 Ciclos"},{id:"history",label:"📊 Historial"}].map(t=>(
                 <button key={t.id} onClick={()=>setTab(t.id)} style={{flex:1,padding:"7px",borderRadius:"8px",fontSize:"0.85rem",fontWeight:600,cursor:"pointer",border:"none",background:tab===t.id?C.bg7:"transparent",color:tab===t.id?C.z1:C.z5}}>{t.label}</button>
