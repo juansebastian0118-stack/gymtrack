@@ -240,8 +240,8 @@ function LoginScreen({systemConfig,onLogin}){
         <div style={{position:"absolute",inset:0,background:"linear-gradient(to bottom,rgba(9,9,11,0.1) 0%,rgba(9,9,11,0.85) 100%)"}}/>
         <div style={{position:"absolute",bottom:"20px",left:0,right:0,textAlign:"center"}}>
           <div style={{marginBottom:"8px"}}><GymLogo size="lg"/></div>
-          <div style={{fontSize:"1.3rem",fontWeight:800,color:"white"}}>by Juappnerí</div>
-          <div style={{fontSize:"0.72rem",color:"rgba(255,255,255,0.5)",marginTop:"3px"}}>Juappnerí productor de aplicaciones Web</div>
+          <div style={{fontSize:"1.3rem",fontWeight:800,color:"white"}}>by Juaneri</div>
+          <div style={{fontSize:"0.72rem",color:"rgba(255,255,255,0.5)",marginTop:"3px"}}>Juaneri · creamos apps web y móviles</div>
         </div>
         <div style={{position:"absolute",top:"12px",right:"14px",display:"flex",gap:"5px"}}>
           {GYM_IMAGES.map((_,i)=><div key={i} onClick={()=>setImgIdx(i)} style={{width:"6px",height:"6px",borderRadius:"50%",background:i===imgIdx?"white":"rgba(255,255,255,0.3)",cursor:"pointer"}}/>)}
@@ -890,7 +890,7 @@ function AppMain({session,systemConfig,onSystemSave,onLogout}){
           <div style={{display:"flex",alignItems:"center",gap:"9px",minWidth:0}}>
             <GymLogo size="sm"/>
             <div style={{minWidth:0}}>
-              <div style={{fontSize:"0.85rem",fontWeight:700,lineHeight:1}}>by Juappnerí</div>
+              <div style={{fontSize:"0.85rem",fontWeight:700,lineHeight:1}}>by Juaneri</div>
               <div style={{fontSize:"0.62rem",color:C.z5,lineHeight:1,marginTop:"2px",display:"flex",alignItems:"center",gap:"5px",flexWrap:"wrap"}}>
                 <span>{systemConfig.teacherName||"Yony Vega"}</span>
                 <span style={{padding:"1px 6px",borderRadius:"999px",fontSize:"0.58rem",fontWeight:700,background:roleColor+"22",color:roleColor,border:`1px solid ${roleColor}44`,flexShrink:0}}>{ROLES[role]?.label}</span>
